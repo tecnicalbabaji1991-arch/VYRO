@@ -1,0 +1,6 @@
+{
+  "name": "VYRO",
+  "description": "Native-first Android video editor foundation with multi-track timeline, C++17/JNI engine contract, and local Room + atomic JSON persistence.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

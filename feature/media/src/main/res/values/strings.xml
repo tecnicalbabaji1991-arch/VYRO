@@ -1,0 +1,15 @@
+<resources>
+    <string name="media_close_desc">Close media selector</string>
+    <string name="media_tab_recent">Recent</string>
+    <string name="media_tab_material">Material</string>
+    <string name="media_filter_video">VIDEO</string>
+    <string name="media_filter_photo">PHOTO</string>
+    <string name="media_filter_all">ALL</string>
+    <string name="media_grid_toggle_desc">Toggle grid density</string>
+    <string name="media_pick_device_cta">Pick videos or photos from device</string>
+    <string name="media_pick_device_subtitle">Uses Android Photo Picker with zero storage permissions</string>
+    <string name="media_pick_audio_cta">Import audio file</string>
+    <string name="media_inspecting_status">Inspecting container &amp; codec metadata...</string>
+    <string name="media_footer_hint">You can select video(s) / photo(s)</string>
+    <string name="media_confirm_desc">Confirm media selection</string>
+</resources>
