@@ -399,7 +399,7 @@ class ExampleRobolectricTest {
         composeRule.waitUntil(timeoutMillis = 12_000L) {
             composeRule.onAllNodesWithTag("export_validation_card").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithTag("export_validation_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("export_validation_card").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithTag("export_done_button").assertIsDisplayed().performClick()
         composeRule.waitForIdle()
 
