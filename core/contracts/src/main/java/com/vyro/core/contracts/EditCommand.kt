@@ -7,6 +7,8 @@ import com.vyro.core.model.ColorFilterPreset
 import com.vyro.core.model.CoverSpec
 import com.vyro.core.model.LayerTransform
 import com.vyro.core.model.TextClipSpec
+import com.vyro.core.model.TransformKeyframe
+import com.vyro.core.model.TransitionSpec
 import com.vyro.core.model.VisualEffectPreset
 
 sealed interface EditCommand {
@@ -77,6 +79,13 @@ sealed interface EditCommand {
         override val commandName: String = "UpdateEffect"
     }
 
+    data class UpdateTransition(
+        val clipId: String,
+        val transitionSpec: TransitionSpec,
+    ) : EditCommand {
+        override val commandName: String = "UpdateTransition"
+    }
+
     data class UpdateAudioSpec(
         val clipId: String,
         val audioSpec: AudioClipSpec,
@@ -100,6 +109,20 @@ sealed interface EditCommand {
         val clipId: String,
     ) : EditCommand {
         override val commandName: String = "ToggleKeyframe"
+    }
+
+    data class AddOrUpdateKeyframe(
+        val clipId: String,
+        val keyframe: TransformKeyframe,
+    ) : EditCommand {
+        override val commandName: String = "AddOrUpdateKeyframe"
+    }
+
+    data class RemoveKeyframe(
+        val clipId: String,
+        val offsetUs: Long,
+    ) : EditCommand {
+        override val commandName: String = "RemoveKeyframe"
     }
 
     data class ToggleTrackMute(

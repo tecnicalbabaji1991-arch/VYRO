@@ -1,12 +1,16 @@
 package com.vyro.feature.editor
 
+import android.view.Surface
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,6 +27,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.OpenWith
@@ -33,16 +39,19 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
@@ -51,25 +60,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import android.view.Surface
-import android.view.SurfaceHolder
-import android.view.SurfaceView
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.graphics.graphicsLayer
 import com.vyro.core.contracts.DecoderBackendType
 import com.vyro.core.contracts.PlaybackDiagnosticsSnapshot
 import com.vyro.core.contracts.RenderGraph
@@ -88,7 +97,10 @@ import com.vyro.core.model.MediaKind
 import com.vyro.core.model.Sequence
 import com.vyro.core.model.TrackType
 import com.vyro.core.model.VisualEffectPreset
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+private const val STAGE_SNAP_THRESHOLD = 0.025f
 
 @Composable
 fun EditorPreviewCanvas(
@@ -105,6 +117,7 @@ fun EditorPreviewCanvas(
     onSelectClip: (String) -> Unit,
     onUpdateTransform: (String, LayerTransform) -> Unit,
     onRequestTextEdit: (String) -> Unit,
+    onOpenTransformBlend: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val ratio = (sequence.width.toFloat() / sequence.height.coerceAtLeast(1).toFloat()).coerceIn(0.45f, 2.0f)
@@ -153,82 +166,151 @@ fun EditorPreviewCanvas(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .background(VyroColors.Obsidian)
-            .padding(horizontal = if (isFullscreen) 8.dp else 0.dp, vertical = 4.dp),
+            .clipToBounds()
+            .padding(horizontal = if (isFullscreen) 8.dp else 0.dp, vertical = if (isFullscreen) 4.dp else 2.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val safeMaxW = maxWidth.coerceAtLeast(1.dp)
+        val safeMaxH = maxHeight.coerceAtLeast(1.dp)
+        val targetH = minOf(safeMaxH, safeMaxW / ratio)
+        val targetW = (targetH * ratio).coerceAtMost(safeMaxW)
+
         Surface(
             modifier = Modifier
-                .fillMaxHeight()
-                .aspectRatio(ratio, matchHeightConstraintsFirst = true)
+                .size(width = targetW, height = targetH)
                 .testTag("preview_canvas"),
             shape = RoundedCornerShape(2.dp),
             color = Color(0xFF070A0F),
             border = BorderStroke(0.5.dp, VyroColors.SteelDivider.copy(alpha = 0.5f)),
         ) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val stageWidthDp = maxWidth
                 val stageW = constraints.maxWidth.toFloat().coerceAtLeast(1f)
                 val stageH = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-                val density = LocalDensity.current
+                var showSnapX by remember { mutableStateOf(false) }
+                var showSnapY by remember { mutableStateOf(false) }
 
                 if (activeVideo != null) {
                     val source = activeVideo.mediaSource
-                    val crop = activeVideo.transform.crop.normalized()
-                    val cropZoom = (1f / minOf(crop.widthFraction, crop.heightFraction)).coerceIn(1f, 4f)
-                    val layerScale = activeVideo.transform.scale.coerceIn(0.35f, 3f) * cropZoom
-                    val layerAlpha = activeVideo.transform.opacity.coerceIn(0f, 1f)
-                    val layerRot = activeVideo.transform.rotationDegrees
+                    val videoNode = renderGraph?.layers?.firstOrNull { it.clipId == activeVideo.id }
+                    val resolvedCrop = (videoNode?.crop ?: activeVideo.transform.crop).normalized()
+                    val cropZoom = (1f / minOf(resolvedCrop.widthFraction, resolvedCrop.heightFraction)).coerceIn(1f, 4f)
+                    val isVideoSelected = activeVideo.id == selectedClipId
+
+                    var dragVideoX by remember(activeVideo.id, activeVideo.transform.normalizedX) {
+                        mutableFloatStateOf(activeVideo.transform.normalizedX)
+                    }
+                    var dragVideoY by remember(activeVideo.id, activeVideo.transform.normalizedY) {
+                        mutableFloatStateOf(activeVideo.transform.normalizedY)
+                    }
+                    var dragVideoScale by remember(activeVideo.id, activeVideo.transform.scale) {
+                        mutableFloatStateOf(activeVideo.transform.scale)
+                    }
+                    var dragVideoRot by remember(activeVideo.id, activeVideo.transform.rotationDegrees) {
+                        mutableFloatStateOf(activeVideo.transform.rotationDegrees)
+                    }
+                    var isDraggingVideo by remember { mutableStateOf(false) }
+
+                    val baseScale = if (isDraggingVideo) dragVideoScale else (videoNode?.scale ?: activeVideo.transform.scale)
+                    val animScale = videoNode?.animatedScale ?: 1f
+                    val layerScale = (baseScale.coerceIn(0.35f, 3f) * animScale) * cropZoom
+                    val layerAlpha = ((videoNode?.opacity ?: activeVideo.transform.opacity) * (videoNode?.animatedAlpha ?: 1f)).coerceIn(0f, 1f)
+                    val layerRot = if (isDraggingVideo) dragVideoRot else (videoNode?.rotationDegrees ?: activeVideo.transform.rotationDegrees)
+                    val normX = if (isDraggingVideo) dragVideoX else (videoNode?.normalizedX ?: activeVideo.transform.normalizedX)
+                    val normY = if (isDraggingVideo) dragVideoY else (videoNode?.normalizedY ?: activeVideo.transform.normalizedY)
+                    val layerTx = ((normX - 0.5f) + (videoNode?.animatedTranslationX ?: 0f)) * stageW
+                    val layerTy = ((normY - 0.5f) - (videoNode?.animatedTranslationY ?: 0f)) * stageH
                     val isExternalVideo = source.mediaKind == MediaKind.VIDEO && !source.uriString.isNullOrBlank()
                     val usingSurfaceVideo = isExternalVideo &&
                         playbackDiagnostics.activeDecoderBackend == DecoderBackendType.MEDIA_CODEC_SURFACE &&
                         playbackDiagnostics.surfaceAttached &&
                         playbackDiagnostics.decodedFrames > 0L
 
+                    val stageGestureModifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(activeVideo.id, isVideoSelected) {
+                            detectTapGestures(
+                                onTap = { onSelectClip(activeVideo.id) },
+                            )
+                        }
+                        .pointerInput(activeVideo.id, activeVideo.transform) {
+                            detectTransformGestures { _, pan, zoom, rotation ->
+                                if (!isDraggingVideo) {
+                                    isDraggingVideo = true
+                                    onSelectClip(activeVideo.id)
+                                }
+                                val rawX = (dragVideoX + pan.x / stageW).coerceIn(0.05f, 0.95f)
+                                val rawY = (dragVideoY + pan.y / stageH).coerceIn(0.05f, 0.95f)
+                                val snappedX = if (abs(rawX - 0.5f) <= STAGE_SNAP_THRESHOLD) 0.5f else rawX
+                                val snappedY = if (abs(rawY - 0.5f) <= STAGE_SNAP_THRESHOLD) 0.5f else rawY
+                                showSnapX = snappedX == 0.5f
+                                showSnapY = snappedY == 0.5f
+                                dragVideoX = snappedX
+                                dragVideoY = snappedY
+                                dragVideoScale = (dragVideoScale * zoom).coerceIn(0.35f, 3.0f)
+                                dragVideoRot = (dragVideoRot + rotation) % 360f
+                                onUpdateTransform(
+                                    activeVideo.id,
+                                    activeVideo.transform.copy(
+                                        normalizedX = dragVideoX,
+                                        normalizedY = dragVideoY,
+                                        scale = dragVideoScale,
+                                        rotationDegrees = dragVideoRot,
+                                    ),
+                                )
+                            }
+                        }
+
                     val videoLayerModifier = Modifier
                         .fillMaxSize()
                         .clipToBounds()
                         .graphicsLayer {
+                            translationX = layerTx
+                            translationY = layerTy
                             scaleX = layerScale
                             scaleY = layerScale
                             rotationZ = layerRot
                             alpha = layerAlpha
                         }
 
-                    if (isExternalVideo) {
-                        PreviewSurfaceStage(
-                            onSurfaceAttached = onSurfaceAttached,
-                            onSurfaceDetached = onSurfaceDetached,
-                            modifier = videoLayerModifier.testTag("preview_surface_view"),
-                        )
-                    }
+                    Box(modifier = stageGestureModifier) {
+                        if (isExternalVideo) {
+                            PreviewSurfaceStage(
+                                onSurfaceAttached = onSurfaceAttached,
+                                onSurfaceDetached = onSurfaceDetached,
+                                modifier = videoLayerModifier.testTag("preview_surface_view"),
+                            )
+                        }
 
-                    if (!usingSurfaceVideo) {
-                        when {
-                            frameBitmap != null -> {
-                                Image(
-                                    bitmap = frameBitmap!!,
-                                    contentDescription = activeVideo.label,
-                                    contentScale = ContentScale.Crop,
-                                    colorFilter = colorFilter,
-                                    modifier = videoLayerModifier,
-                                )
-                            }
-                            source.materialId == "studio_reel" -> {
-                                Image(
-                                    painter = painterResource(id = VyroDesignAssets.studioReelDrawableRes),
-                                    contentDescription = activeVideo.label,
-                                    contentScale = ContentScale.Crop,
-                                    colorFilter = colorFilter,
-                                    modifier = videoLayerModifier,
-                                )
-                            }
-                            else -> {
-                                Box(
-                                    modifier = videoLayerModifier.background(Color(source.backdropColorArgb)),
-                                )
+                        if (!usingSurfaceVideo) {
+                            when {
+                                frameBitmap != null -> {
+                                    Image(
+                                        bitmap = frameBitmap!!,
+                                        contentDescription = activeVideo.label,
+                                        contentScale = ContentScale.Crop,
+                                        colorFilter = colorFilter,
+                                        modifier = videoLayerModifier,
+                                    )
+                                }
+                                source.materialId == "studio_reel" -> {
+                                    Image(
+                                        painter = painterResource(id = VyroDesignAssets.studioReelDrawableRes),
+                                        contentDescription = activeVideo.label,
+                                        contentScale = ContentScale.Crop,
+                                        colorFilter = colorFilter,
+                                        modifier = videoLayerModifier,
+                                    )
+                                }
+                                else -> {
+                                    Box(
+                                        modifier = videoLayerModifier.background(Color(source.backdropColorArgb)),
+                                    )
+                                }
                             }
                         }
                     }
@@ -313,20 +395,121 @@ fun EditorPreviewCanvas(
                                 .padding(8.dp),
                         )
                     }
+
+                    // Stage selection overlay when active video clip is selected
+                    if (isVideoSelected) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(4.dp)
+                                .border(1.5.dp, VyroColors.ElectricCyan.copy(alpha = 0.72f), RoundedCornerShape(4.dp))
+                                .testTag("stage_selection_overlay"),
+                        ) {
+                            SelectionCornerMarkers(color = VyroColors.ElectricCyan)
+                            val isOffset = abs(activeVideo.transform.normalizedX - 0.5f) > 0.01f ||
+                                abs(activeVideo.transform.normalizedY - 0.5f) > 0.01f ||
+                                abs(activeVideo.transform.scale - 1.0f) > 0.01f
+                            val handleContent: @Composable () -> Unit = {
+                                HandlePill(
+                                    icon = Icons.Default.Crop,
+                                    description = stringResource(R.string.editor_stage_crop_blend_desc),
+                                    containerColor = VyroColors.ElectricCyan,
+                                    iconTint = VyroColors.Obsidian,
+                                    testTag = "stage_handle_crop",
+                                    onClick = onOpenTransformBlend,
+                                )
+                                HandlePill(
+                                    icon = Icons.AutoMirrored.Filled.RotateRight,
+                                    description = stringResource(R.string.editor_stage_rotate_desc),
+                                    containerColor = VyroColors.ElectricCyan,
+                                    iconTint = VyroColors.Obsidian,
+                                    testTag = "stage_handle_rotate",
+                                    onClick = {
+                                        val nextRot = (activeVideo.transform.rotationDegrees + 90f) % 360f
+                                        onUpdateTransform(activeVideo.id, activeVideo.transform.copy(rotationDegrees = nextRot))
+                                    },
+                                )
+                                if (isOffset) {
+                                    HandlePill(
+                                        icon = Icons.Default.CenterFocusStrong,
+                                        description = stringResource(R.string.editor_stage_reset_center_desc),
+                                        containerColor = VyroColors.CrimsonAccent,
+                                        iconTint = Color.White,
+                                        testTag = "stage_handle_reset",
+                                        onClick = {
+                                            isDraggingVideo = false
+                                            showSnapX = false
+                                            showSnapY = false
+                                            onUpdateTransform(
+                                                activeVideo.id,
+                                                activeVideo.transform.copy(
+                                                    normalizedX = 0.5f,
+                                                    normalizedY = 0.5f,
+                                                    scale = 1.0f,
+                                                    rotationDegrees = 0f,
+                                                ),
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                            if (stageWidthDp < 120.dp) {
+                                Column(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(2.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    handleContent()
+                                }
+                            } else {
+                                Row(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(2.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    handleContent()
+                                }
+                            }
+                        }
+                    }
                 } else {
                     Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
-                            text = "NO VIDEO CLIP AT PLAYHEAD",
+                            text = stringResource(R.string.editor_timeline_no_video).uppercase(),
                             style = MaterialTheme.typography.labelMedium,
                             color = VyroColors.SteelMuted,
                         )
                     }
                 }
 
-                // Interactive text overlays driven by RenderGraph evaluation
+                // Center alignment crosshairs during transform snap
+                if (showSnapX || showSnapY) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        if (showSnapX) {
+                            drawLine(
+                                color = VyroColors.ElectricCyan.copy(alpha = 0.85f),
+                                start = Offset(size.width / 2f, 0f),
+                                end = Offset(size.width / 2f, size.height),
+                                strokeWidth = 2f,
+                            )
+                        }
+                        if (showSnapY) {
+                            drawLine(
+                                color = VyroColors.ElectricCyan.copy(alpha = 0.85f),
+                                start = Offset(0f, size.height / 2f),
+                                end = Offset(size.width, size.height / 2f),
+                                strokeWidth = 2f,
+                            )
+                        }
+                    }
+                }
+
+                // Interactive text overlays driven by RenderGraph evaluation + multi-touch arbitration
                 textClips.forEach { clip ->
                     val textSpec = clip.textSpec ?: return@forEach
                     val graphNode = renderGraph?.layers?.firstOrNull { it.clipId == clip.id }
@@ -351,49 +534,74 @@ fun EditorPreviewCanvas(
                         mutableFloatStateOf(clip.transform.rotationDegrees)
                     }
                     var isDragging by remember { mutableStateOf(false) }
+                    var overlaySize by remember { mutableStateOf(IntSize.Zero) }
 
+                    val animOffsetX = graphNode?.animatedTranslationX ?: 0f
                     val animOffsetY = graphNode?.animatedTranslationY ?: 0f
                     val animScale = graphNode?.animatedScale ?: 1f
                     val animAlpha = graphNode?.animatedAlpha ?: 1f
-                    val centerXPx = (if (isDragging) dragX else clip.transform.normalizedX) * stageW
-                    val centerYPx = ((if (isDragging) dragY else clip.transform.normalizedY) - animOffsetY) * stageH
+                    val resolvedNormX = if (isDragging) dragX else (graphNode?.normalizedX ?: clip.transform.normalizedX)
+                    val resolvedNormY = if (isDragging) dragY else (graphNode?.normalizedY ?: clip.transform.normalizedY)
+                    val resolvedScale = if (isDragging) currentScale else (graphNode?.scale ?: clip.transform.scale)
+                    val resolvedRotation = if (isDragging) currentRot else (graphNode?.rotationDegrees ?: clip.transform.rotationDegrees)
+                    val resolvedOpacity = graphNode?.opacity ?: clip.transform.opacity
+                    val visibleText = graphNode?.visibleTextCharCount?.let { count ->
+                        textSpec.text.take(count.coerceIn(0, textSpec.text.length))
+                    } ?: textSpec.text
+
+                    val centerXPx = (resolvedNormX + animOffsetX) * stageW
+                    val centerYPx = (resolvedNormY - animOffsetY) * stageH
+                    val halfW = if (overlaySize.width > 0) overlaySize.width / 2f else 90f
+                    val halfH = if (overlaySize.height > 0) overlaySize.height / 2f else 32f
 
                     val boxModifier = Modifier
                         .offset {
                             IntOffset(
-                                x = (centerXPx - with(density) { 80.dp.toPx() }).roundToInt(),
-                                y = (centerYPx - with(density) { 24.dp.toPx() }).roundToInt(),
+                                x = (centerXPx - halfW).roundToInt(),
+                                y = (centerYPx - halfH).roundToInt(),
                             )
                         }
-                        .scale((if (isDragging) currentScale else clip.transform.scale) * animScale)
-                        .rotate(if (isDragging) currentRot else clip.transform.rotationDegrees)
-                        .alpha((clip.transform.opacity * animAlpha).coerceIn(0f, 1f))
+                        .onSizeChanged { overlaySize = it }
+                        .scale(resolvedScale * animScale)
+                        .rotate(resolvedRotation)
+                        .alpha((resolvedOpacity * animAlpha).coerceIn(0f, 1f))
                         .pointerInput(clip.id) {
-                            detectDragGestures(
-                                onDragStart = {
+                            detectTapGestures(
+                                onTap = { onSelectClip(clip.id) },
+                                onDoubleTap = {
+                                    onSelectClip(clip.id)
+                                    onRequestTextEdit(clip.id)
+                                },
+                            )
+                        }
+                        .pointerInput(clip.id, clip.transform) {
+                            detectTransformGestures { _, pan, zoom, rotation ->
+                                if (!isDragging) {
                                     isDragging = true
                                     onSelectClip(clip.id)
-                                },
-                                onDragEnd = {
-                                    isDragging = false
-                                    onUpdateTransform(
-                                        clip.id,
-                                        clip.transform.copy(
-                                            normalizedX = dragX.coerceIn(0.1f, 0.9f),
-                                            normalizedY = dragY.coerceIn(0.1f, 0.9f),
-                                            scale = currentScale,
-                                            rotationDegrees = currentRot,
-                                        ),
-                                    )
-                                },
-                                onDragCancel = { isDragging = false },
-                            ) { change, dragAmount ->
-                                change.consume()
-                                dragX = (dragX + dragAmount.x / stageW).coerceIn(0.1f, 0.9f)
-                                dragY = (dragY + dragAmount.y / stageH).coerceIn(0.1f, 0.9f)
+                                }
+                                val rawX = (dragX + pan.x / stageW).coerceIn(0.08f, 0.92f)
+                                val rawY = (dragY + pan.y / stageH).coerceIn(0.08f, 0.92f)
+                                val snappedX = if (abs(rawX - 0.5f) <= STAGE_SNAP_THRESHOLD) 0.5f else rawX
+                                val snappedY = if (abs(rawY - 0.5f) <= STAGE_SNAP_THRESHOLD) 0.5f else rawY
+                                showSnapX = snappedX == 0.5f
+                                showSnapY = snappedY == 0.5f
+                                dragX = snappedX
+                                dragY = snappedY
+                                currentScale = (currentScale * zoom).coerceIn(0.4f, 2.8f)
+                                currentRot = (currentRot + rotation) % 360f
+                                onUpdateTransform(
+                                    clip.id,
+                                    clip.transform.copy(
+                                        normalizedX = dragX,
+                                        normalizedY = dragY,
+                                        scale = currentScale,
+                                        rotationDegrees = currentRot,
+                                    ),
+                                )
                             }
                         }
-                        .clickable { onSelectClip(clip.id) }
+                        .testTag("text_overlay_${clip.id}")
 
                     Box(modifier = boxModifier) {
                         Box(
@@ -407,10 +615,10 @@ fun EditorPreviewCanvas(
                                         Modifier
                                     },
                                 )
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
                         ) {
                             Text(
-                                text = textSpec.text,
+                                text = visibleText,
                                 fontFamily = fontFamily,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = textSpec.fontSizeSp.sp,
@@ -419,20 +627,23 @@ fun EditorPreviewCanvas(
                         }
 
                         if (isSelected) {
+                            SelectionCornerMarkers(color = VyroColors.CrimsonAccent)
                             Row(
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .offset(x = 8.dp, y = (-14).dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    .offset(x = 12.dp, y = (-26).dp),
+                                horizontalArrangement = Arrangement.spacedBy(0.dp),
                             ) {
                                 HandlePill(
                                     icon = Icons.Default.Edit,
-                                    description = "Edit text content",
+                                    description = stringResource(R.string.editor_stage_edit_text_desc),
+                                    testTag = "text_handle_edit_${clip.id}",
                                     onClick = { onRequestTextEdit(clip.id) },
                                 )
                                 HandlePill(
                                     icon = Icons.AutoMirrored.Filled.RotateRight,
-                                    description = "Rotate 15 degrees",
+                                    description = stringResource(R.string.editor_stage_rotate_desc),
+                                    testTag = "text_handle_rotate_${clip.id}",
                                     onClick = {
                                         val nextRot = (clip.transform.rotationDegrees + 15f) % 360f
                                         onUpdateTransform(clip.id, clip.transform.copy(rotationDegrees = nextRot))
@@ -440,7 +651,8 @@ fun EditorPreviewCanvas(
                                 )
                                 HandlePill(
                                     icon = Icons.Default.OpenWith,
-                                    description = "Cycle scale",
+                                    description = stringResource(R.string.editor_stage_scale_desc),
+                                    testTag = "text_handle_scale_${clip.id}",
                                     onClick = {
                                         val nextScale = if (clip.transform.scale >= 1.35f) 0.85f else clip.transform.scale + 0.15f
                                         onUpdateTransform(clip.id, clip.transform.copy(scale = nextScale))
@@ -459,16 +671,36 @@ fun EditorPreviewCanvas(
                         shape = CircleShape,
                         color = VyroColors.Obsidian.copy(alpha = 0.72f),
                     ) {
-                        IconButton(onClick = onExitFullscreen) {
+                        IconButton(
+                            onClick = onExitFullscreen,
+                            modifier = Modifier.testTag("stage_exit_fullscreen_button"),
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.FullscreenExit,
-                                contentDescription = "Exit fullscreen",
+                                contentDescription = stringResource(R.string.editor_fullscreen_desc),
                                 tint = VyroColors.TextPrimary,
                             )
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SelectionCornerMarkers(color: Color) {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val dotRadius = 3.5.dp.toPx()
+        val corners = listOf(
+            Offset(0f, 0f),
+            Offset(size.width, 0f),
+            Offset(0f, size.height),
+            Offset(size.width, size.height),
+        )
+        corners.forEach { corner ->
+            drawCircle(color = color, radius = dotRadius, center = corner)
+            drawCircle(color = VyroColors.Obsidian, radius = dotRadius * 0.45f, center = corner)
         }
     }
 }
@@ -532,26 +764,37 @@ private fun PreviewSurfaceStage(
 
 @Composable
 private fun HandlePill(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     description: String,
+    containerColor: Color = VyroColors.CrimsonAccent,
+    iconTint: Color = Color.White,
+    testTag: String? = null,
     onClick: () -> Unit,
 ) {
-    Surface(
+    Box(
         modifier = Modifier
             .minimumInteractiveComponentSize()
-            .size(28.dp)
+            .size(48.dp)
             .clip(CircleShape)
-            .clickable(onClick = onClick),
-        shape = CircleShape,
-        color = VyroColors.CrimsonAccent,
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = description }
+            .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(contentAlignment = Alignment.Center) {
-            Icon(
-                imageVector = icon,
-                contentDescription = description,
-                tint = Color.White,
-                modifier = Modifier.size(14.dp),
-            )
+        Surface(
+            modifier = Modifier.size(28.dp),
+            shape = CircleShape,
+            color = containerColor,
+            border = BorderStroke(1.dp, VyroColors.Obsidian.copy(alpha = 0.7f)),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
         }
     }
 }

@@ -260,10 +260,14 @@ class AndroidExportEngine(
                     allocated = allocated,
                     released = released,
                     onFrameProgress = { frameIdx, ptsUs ->
+                        if (frameIdx == 1 || frameIdx % 12 == 0) {
+                            ensureSufficientDiskHeadroom(finalDir)
+                        }
                         val frac = 0.10f + 0.72f * (frameIdx.toFloat() / totalFrames.coerceAtLeast(1).toFloat())
                         emitProgress(ExportPhase.ENCODING, frac, frameIdx, ptsUs)
                     },
                     onMuxStart = {
+                        ensureSufficientDiskHeadroom(finalDir)
                         emitProgress(ExportPhase.MUXING, 0.85f, totalFrames, durationUs)
                     },
                 )
@@ -285,10 +289,14 @@ class AndroidExportEngine(
                     includeAudio = seqHasAudio,
                     tempFile = tempFile,
                     onFrameProgress = { frameIdx, ptsUs ->
+                        if (frameIdx == 1 || frameIdx % 12 == 0) {
+                            ensureSufficientDiskHeadroom(finalDir)
+                        }
                         val frac = 0.10f + 0.72f * (frameIdx.toFloat() / totalFrames.coerceAtLeast(1).toFloat())
                         emitProgress(ExportPhase.ENCODING, frac, frameIdx, ptsUs)
                     },
                     onMuxStart = {
+                        ensureSufficientDiskHeadroom(finalDir)
                         emitProgress(ExportPhase.MUXING, 0.85f, totalFrames, durationUs)
                     },
                 )
@@ -713,7 +721,7 @@ class AndroidExportEngine(
         textPaint: Paint,
     ) {
         val alpha = ((node.opacity * node.animatedAlpha).coerceIn(0f, 1f) * 255f).roundToInt()
-        val cx = node.normalizedX * width
+        val cx = (node.normalizedX + node.animatedTranslationX) * width
         val cy = (node.normalizedY - node.animatedTranslationY) * height
 
         canvas.save()
@@ -724,10 +732,13 @@ class AndroidExportEngine(
 
         val textSpec = node.textSpec
         if (textSpec != null) {
+            val drawText = node.visibleTextCharCount?.let { count ->
+                textSpec.text.take(count.coerceIn(0, textSpec.text.length))
+            } ?: textSpec.text
             textPaint.color = textSpec.colorArgb.toInt()
             textPaint.alpha = alpha
             textPaint.textSize = (textSpec.fontSizeSp * (height / 640f)).coerceAtLeast(18f)
-            canvas.drawText(textSpec.text, 0f, textPaint.textSize * 0.35f, textPaint)
+            canvas.drawText(drawText, 0f, textPaint.textSize * 0.35f, textPaint)
         } else {
             paint.color = applyFilterPreviewTint(node.backdropColorArgb.toInt(), node.filterPreset)
             paint.alpha = alpha
@@ -823,6 +834,15 @@ class AndroidExportEngine(
             sessionId,
             error.code,
         )
+    }
+
+    private fun ensureSufficientDiskHeadroom(targetDir: File) {
+        val remaining = availableBytesProvider(targetDir)
+        if (remaining < ExportConfig.MIN_FREE_DISK_HEADROOM_BYTES) {
+            throw java.io.IOException(
+                "ENOSPC: Storage exhausted mid-export (${remaining / 1024L} KB remaining)",
+            )
+        }
     }
 
     private fun storageError(detail: String) = EngineError(

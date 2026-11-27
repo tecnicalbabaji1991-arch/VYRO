@@ -398,4 +398,36 @@ class AtomicProjectStorageTest {
         val updatedSummaries = repo.observeProjects().first()
         assertEquals(0, updatedSummaries.first().missingAssetCount)
     }
+
+    @Test
+    fun `atomic storage preserves clip transitions and keyframes across save and load`() {
+        val storage = AtomicProjectStorage(tempFolder.root)
+        val base = sampleDoc("Phase 10 Roundtrip", revision = 4L)
+        val enrichedClip = base.sequence.tracks.first().clips.first().copy(
+            transitionIn = com.vyro.core.model.TransitionSpec(
+                preset = com.vyro.core.model.TransitionPreset.CROSS_DISSOLVE,
+                durationUs = 600_000L,
+            ),
+            keyframesEnabled = true,
+            keyframes = listOf(
+                com.vyro.core.model.TransformKeyframe(0L, normalizedX = 0.25f, scale = 1.0f),
+                com.vyro.core.model.TransformKeyframe(1_200_000L, normalizedX = 0.75f, scale = 1.6f, opacity = 0.8f),
+            ),
+        )
+        val doc = base.copy(
+            sequence = base.sequence.copy(
+                tracks = listOf(base.sequence.tracks.first().copy(clips = listOf(enrichedClip))),
+            ),
+        )
+        assertTrue(storage.writeAtomic(doc).isSuccess)
+
+        val read = storage.readWithRecovery(doc.projectId)
+        assertTrue(read is EngineResult.Success)
+        val loadedClip = (read as EngineResult.Success).value.document.sequence.tracks.first().clips.first()
+        assertEquals(com.vyro.core.model.TransitionPreset.CROSS_DISSOLVE, loadedClip.transitionIn.preset)
+        assertEquals(600_000L, loadedClip.transitionIn.durationUs)
+        assertTrue(loadedClip.keyframesEnabled)
+        assertEquals(2, loadedClip.keyframes.size)
+        assertEquals(1.6f, loadedClip.keyframes[1].scale, 0.001f)
+    }
 }

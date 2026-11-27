@@ -14,6 +14,9 @@ import com.vyro.core.model.TextAnimationPreset
 import com.vyro.core.model.TextClipSpec
 import com.vyro.core.model.Track
 import com.vyro.core.model.TrackType
+import com.vyro.core.model.TransformKeyframe
+import com.vyro.core.model.TransitionPreset
+import com.vyro.core.model.TransitionSpec
 import com.vyro.core.model.VisualEffectPreset
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -174,5 +177,74 @@ class RenderGraphEvaluatorTest {
 
         val graph = RenderGraphEvaluator.evaluate(sequence, timelineUs = 500_000L)
         assertTrue(graph.layers.isEmpty())
+    }
+
+    @Test
+    fun `keyframes transitions and typewriter animation evaluate deterministically`() {
+        val sequence = Sequence(
+            id = "seq_p10",
+            width = 1080,
+            height = 1920,
+            frameRate = Rational.FPS_30,
+            tracks = listOf(
+                Track(
+                    id = "track_v",
+                    name = "Video",
+                    type = TrackType.VIDEO,
+                    zIndex = 0,
+                    clips = listOf(
+                        Clip(
+                            id = "clip_kf",
+                            trackId = "track_v",
+                            label = "Keyframed",
+                            timing = ClipTiming(0L, 0L, 4_000_000L),
+                            transitionIn = TransitionSpec(TransitionPreset.SLIDE_LEFT, durationUs = 1_000_000L),
+                            keyframesEnabled = true,
+                            keyframes = listOf(
+                                TransformKeyframe(0L, normalizedX = 0.2f, scale = 1.0f, opacity = 1.0f),
+                                TransformKeyframe(2_000_000L, normalizedX = 0.8f, scale = 2.0f, opacity = 0.4f),
+                            ),
+                        ),
+                    ),
+                ),
+                Track(
+                    id = "track_t",
+                    name = "Text",
+                    type = TrackType.TEXT,
+                    zIndex = 2,
+                    clips = listOf(
+                        Clip(
+                            id = "clip_tw",
+                            trackId = "track_t",
+                            label = "TYPING",
+                            timing = ClipTiming(0L, 0L, 3_000_000L),
+                            textSpec = TextClipSpec(
+                                text = "VYROSTUDIO",
+                                animationPreset = TextAnimationPreset.TYPEWRITER,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+
+        val midTransition = RenderGraphEvaluator.evaluate(sequence, timelineUs = 500_000L)
+        val vMid = midTransition.layers.first { it.clipId == "clip_kf" }
+        // At 500ms / 1000ms SLIDE_LEFT: translateX = 0.5 * 0.28 = 0.14; keyframe X midpoint (500/2000 = 0.25) -> 0.35
+        assertEquals(0.14f, vMid.animatedTranslationX, 0.005f)
+        assertEquals(0.35f, vMid.normalizedX, 0.005f)
+        assertEquals(1.25f, vMid.scale, 0.005f)
+        assertEquals(0.85f, vMid.opacity, 0.005f)
+
+        val tMid = midTransition.layers.first { it.clipId == "clip_tw" }
+        // 500ms / 900ms * 10 chars = 5 visible chars
+        assertEquals(5, tMid.visibleTextCharCount)
+
+        val postKey = RenderGraphEvaluator.evaluate(sequence, timelineUs = 2_000_000L)
+        val vPost = postKey.layers.first { it.clipId == "clip_kf" }
+        assertEquals(0.0f, vPost.animatedTranslationX, 0.001f)
+        assertEquals(0.8f, vPost.normalizedX, 0.005f)
+        assertEquals(2.0f, vPost.scale, 0.005f)
+        assertEquals(10, postKey.layers.first { it.clipId == "clip_tw" }.visibleTextCharCount)
     }
 }

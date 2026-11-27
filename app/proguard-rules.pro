@@ -1,21 +1,32 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# VYRO Production R8 / ProGuard Keep Rules
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Preserve stack trace line numbers & source mapping without leaking paths
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Preserve JNI native bridge methods and callbacks
+-keepclasseswithmembernames class com.vyro.bridge.jni.** {
+    native <methods>;
+}
+-keep class com.vyro.bridge.jni.NativeEngine {
+    *;
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preserve kotlinx.serialization models & serializer companion factories
+-keepattributes *Annotation*, InnerClasses
+-dontnote kotlinx.serialization.AnnotationsKt
+-keepclassmembers class com.vyro.core.model.** {
+    *** Companion;
+}
+-keepclasseswithmembers class com.vyro.core.model.** {
+    kotlinx.serialization.KSerializer serializer(...);
+}
+
+# Preserve custom timeline Android View constructors referenced by AndroidView/Compose
+-keepclassmembers class com.vyro.feature.editor.TimelineSurfaceView {
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+}
+
+# Preserve BuildConfig flags
+-keep class com.example.BuildConfig { *; }

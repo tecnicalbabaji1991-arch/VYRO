@@ -2,6 +2,8 @@ package com.example
 
 import android.content.Context
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -409,5 +411,122 @@ class ExampleRobolectricTest {
         composeRule.onNodeWithTag("diagnostics_lazy_column")
             .performScrollToNode(hasTestTag("diagnostics_phase9_export_card"))
         composeRule.onNodeWithTag("diagnostics_phase9_export_card").assertIsDisplayed()
+    }
+
+    @Test
+    fun `phase 10 integrates transitions keyframes typewriter text effects undo redo and export presets`() {
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("new_project_hero_card").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodesWithTag("media_tile_mat_white").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("media_tile_mat_white").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("media_confirm_fab").assertIsDisplayed().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 8_000L) {
+            composeRule.onAllNodesWithTag("tab_transition").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // 1. Apply Cross Dissolve transition and verify return to root strip
+        composeRule.onNodeWithTag("tab_transition").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("transition_cross_dissolve").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_subbar_back").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // 2. Open Keyframe subbar, add start keyframe, step keyframe scale, then Undo & Redo
+        composeRule.onNodeWithTag("keyframe_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("keyframe_add_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("keyframe_scale_up_button").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("undo_button").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("redo_button").assertIsEnabled().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_subbar_back").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // 3. Add Text clip and apply Typewriter animation preset
+        composeRule.onNodeWithTag("tool_add_text").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_animate").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("anim_typewriter").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_subbar_back").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // 4. Verify Export dialog exposes presets after integrated edits
+        composeRule.onNodeWithTag("editor_export_button").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodesWithTag("export_dialog").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("export_res_1080p").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("export_close_button").assertIsDisplayed().performClick()
+    }
+
+    @Test
+    fun `phase 11 contextual strip zoom track lock and stage selection overlay work end to end`() {
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("new_project_hero_card").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodesWithTag("media_tile_mat_white").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("media_tile_mat_white").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("media_confirm_fab").assertIsDisplayed().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 8_000L) {
+            composeRule.onAllNodesWithTag("contextual_selection_chip").fetchSemanticsNodes().isNotEmpty()
+        }
+
+        // Stage selection overlay & handle pills are active for the initially selected clip
+        composeRule.onNodeWithTag("stage_selection_overlay").assertIsDisplayed()
+        composeRule.onNodeWithTag("stage_handle_rotate").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Timeline zoom controls step in/reset/out cleanly
+        composeRule.onNodeWithTag("timeline_zoom_in_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("timeline_zoom_reset_button").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("timeline_zoom_out_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+
+        // Locking active track disables destructive/transform edits until unlocked
+        composeRule.onNodeWithTag("contextual_lock_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tab_transition").performScrollTo().assertIsNotEnabled()
+        composeRule.onNodeWithTag("contextual_lock_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tab_transition").performScrollTo().assertIsEnabled()
+
+        // Switching selection away from text automatically closes the TEXT contextual subbar
+        composeRule.onNodeWithTag("tool_add_text").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tool_edit_text").assertIsDisplayed()
+        composeRule.onNodeWithTag("contextual_clear_selection_button").assertIsDisplayed().performClick()
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("tab_trim").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    @Config(sdk = [36], qualifiers = "w840dp-h600dp")
+    fun `phase 11 switches to expanded split studio layout on tablet viewport`() {
+        composeRule.waitForIdle()
+        composeRule.onNodeWithTag("new_project_hero_card").assertIsDisplayed().performClick()
+        composeRule.waitUntil(timeoutMillis = 5_000L) {
+            composeRule.onAllNodesWithTag("media_tile_mat_white").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("media_tile_mat_white").assertIsDisplayed().performClick()
+        composeRule.onNodeWithTag("media_confirm_fab").assertIsDisplayed().performClick()
+
+        composeRule.waitUntil(timeoutMillis = 8_000L) {
+            composeRule.onAllNodesWithTag("editor_expanded_layout").fetchSemanticsNodes().isNotEmpty()
+        }
+        composeRule.onNodeWithTag("editor_expanded_layout").assertIsDisplayed()
+        composeRule.onNodeWithTag("preview_canvas").assertIsDisplayed()
+        composeRule.onNodeWithTag("timeline_surface_view").assertIsDisplayed()
+        composeRule.onNodeWithTag("tab_trim").assertIsDisplayed()
     }
 }

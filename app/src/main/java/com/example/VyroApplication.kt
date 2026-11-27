@@ -10,12 +10,14 @@ class VyroApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        container.runtimeHardeningMonitor.refreshSystemTelemetry()
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (::container.isInitialized) {
             container.cacheManager.onTrimMemory(MemoryPressureLevel.fromAndroidTrimLevel(level))
+            container.runtimeHardeningMonitor.refreshSystemTelemetry()
         }
     }
 }

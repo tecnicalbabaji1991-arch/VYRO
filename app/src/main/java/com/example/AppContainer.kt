@@ -16,6 +16,7 @@ import com.vyro.core.contracts.PlaybackControllerContract
 import com.vyro.core.contracts.PlaybackDiagnosticsSnapshot
 import com.vyro.core.contracts.ProjectRepository
 import com.vyro.core.contracts.RenderDiagnosticsSnapshot
+import com.vyro.core.contracts.RuntimeHardeningMonitorContract
 import com.vyro.core.database.VyroStorageModule
 import com.vyro.platform.media.AndroidAudioPlaybackEngine
 import com.vyro.platform.media.AndroidCacheAndProxyManager
@@ -24,6 +25,7 @@ import com.vyro.platform.media.AndroidMediaCodecAudioDecoder
 import com.vyro.platform.media.AndroidMediaCodecDecoder
 import com.vyro.platform.media.AndroidMediaInspector
 import com.vyro.platform.media.AndroidPlaybackCoordinator
+import com.vyro.platform.media.AndroidRuntimeHardeningMonitor
 import com.vyro.platform.media.GlesCompositionRenderer
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,6 +52,13 @@ class AppContainer(context: Context) {
         AndroidCacheAndProxyManager(
             context = appContext,
             dispatchers = dispatchers,
+        )
+    }
+
+    val runtimeHardeningMonitor: RuntimeHardeningMonitorContract by lazy {
+        AndroidRuntimeHardeningMonitor(
+            context = appContext,
+            cacheManager = cacheManager,
         )
     }
 

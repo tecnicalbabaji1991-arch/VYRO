@@ -278,6 +278,31 @@ object ProjectSchemaMigrator {
                                 fadeOutUs = audio.optLong("fadeOutUs", 0L).coerceAtLeast(0L),
                             )
                         }
+                        val transitionIn = cObj.optJSONObject("transitionIn")?.let { trObj ->
+                            com.vyro.core.model.TransitionSpec(
+                                preset = runCatching {
+                                    com.vyro.core.model.TransitionPreset.valueOf(trObj.optString("preset", "NONE"))
+                                }.getOrDefault(com.vyro.core.model.TransitionPreset.NONE),
+                                durationUs = trObj.optLong("durationUs", 500_000L).coerceIn(100_000L, 2_000_000L),
+                            )
+                        } ?: com.vyro.core.model.TransitionSpec()
+                        val keyframes = cObj.optJSONArray("keyframes")?.let { kfArr ->
+                            buildList {
+                                for (k in 0 until kfArr.length()) {
+                                    val kObj = kfArr.optJSONObject(k) ?: continue
+                                    add(
+                                        com.vyro.core.model.TransformKeyframe(
+                                            offsetUs = kObj.optLong("offsetUs", 0L).coerceAtLeast(0L),
+                                            normalizedX = kObj.optDouble("normX", 0.5).toFloat().coerceIn(0.05f, 0.95f),
+                                            normalizedY = kObj.optDouble("normY", 0.5).toFloat().coerceIn(0.05f, 0.95f),
+                                            scale = kObj.optDouble("scale", 1.0).toFloat().coerceIn(0.35f, 3.0f),
+                                            rotationDegrees = kObj.optDouble("rotation", 0.0).toFloat(),
+                                            opacity = kObj.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
+                                        ),
+                                    )
+                                }
+                            }.sortedBy { it.offsetUs }
+                        } ?: emptyList()
                         add(
                             Clip(
                                 id = cObj.getString("id"),
@@ -317,7 +342,9 @@ object ProjectSchemaMigrator {
                                 effectPreset = runCatching {
                                     VisualEffectPreset.valueOf(cObj.optString("effectPreset", "NONE"))
                                 }.getOrDefault(VisualEffectPreset.NONE),
+                                transitionIn = transitionIn,
                                 keyframesEnabled = cObj.optBoolean("keyframesEnabled", false),
+                                keyframes = keyframes,
                                 accentColorArgb = cObj.optLong("accentColorArgb", 0xFFFFFFFFL),
                             ),
                         )
@@ -436,6 +463,32 @@ object ProjectSchemaMigrator {
                     put("cropBottom", clip.transform.crop.bottom.toDouble())
                     put("blendMode", clip.transform.blendMode.name)
                     put("keyframesEnabled", clip.keyframesEnabled)
+                    put(
+                        "transitionIn",
+                        JSONObject().apply {
+                            put("preset", clip.transitionIn.preset.name)
+                            put("durationUs", clip.transitionIn.durationUs)
+                        },
+                    )
+                    if (clip.keyframes.isNotEmpty()) {
+                        put(
+                            "keyframes",
+                            JSONArray().apply {
+                                clip.keyframes.forEach { kf ->
+                                    put(
+                                        JSONObject().apply {
+                                            put("offsetUs", kf.offsetUs)
+                                            put("normX", kf.normalizedX.toDouble())
+                                            put("normY", kf.normalizedY.toDouble())
+                                            put("scale", kf.scale.toDouble())
+                                            put("rotation", kf.rotationDegrees.toDouble())
+                                            put("opacity", kf.opacity.toDouble())
+                                        },
+                                    )
+                                }
+                            },
+                        )
+                    }
                     put("accentColorArgb", clip.accentColorArgb)
                     put("filterPreset", clip.filterPreset.name)
                     put("effectPreset", clip.effectPreset.name)

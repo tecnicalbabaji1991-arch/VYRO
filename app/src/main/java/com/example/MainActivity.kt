@@ -181,6 +181,7 @@ fun VyroNavHost(container: AppContainer) {
                     cacheManager = container.cacheManager,
                     projectRepository = container.projectRepository,
                     exportCoordinator = container.exportCoordinator,
+                    runtimeHardeningMonitor = container.runtimeHardeningMonitor,
                 ),
             )
             DiagnosticsScreen(

@@ -48,8 +48,10 @@ data class CompositionNode(
     val effectPreset: VisualEffectPreset,
     val textSpec: TextClipSpec? = null,
     val animatedAlpha: Float = 1.0f,
+    val animatedTranslationX: Float = 0.0f,
     val animatedTranslationY: Float = 0.0f,
     val animatedScale: Float = 1.0f,
+    val visibleTextCharCount: Int? = null,
     val modelMatrix: List<Float>,
 ) {
     fun toColumnMajorMatrix(): FloatArray = FloatArray(16) { idx -> modelMatrix.getOrElse(idx) { if (idx % 5 == 0) 1f else 0f } }

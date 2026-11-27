@@ -51,8 +51,12 @@ class AndroidMediaInspector(
             if (afd == null) {
                 return@withContext missingMedia("Selected media file could not be opened.", uriString)
             }
+            val lengthBytes = afd.length
             afd.use { descriptor ->
                 runCatching { descriptor.parcelFileDescriptor?.close() }
+            }
+            if (lengthBytes == 0L) {
+                return@withContext unsupportedMedia("Selected media file is empty (0 bytes).", uriString)
             }
         } catch (sec: SecurityException) {
             return@withContext permissionRevoked("Read permission revoked for $uriString: ${sec.message}")

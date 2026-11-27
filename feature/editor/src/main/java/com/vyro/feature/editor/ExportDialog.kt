@@ -36,6 +36,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -271,6 +274,7 @@ internal fun ExportStudioDialog(
 
                 if (isActive) {
                     Surface(
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                         shape = MaterialTheme.shapes.small,
                         color = VyroColors.SlateControl,
                         border = BorderStroke(1.dp, VyroColors.ElectricCyan.copy(alpha = 0.5f)),
@@ -320,6 +324,7 @@ internal fun ExportStudioDialog(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
                             .testTag("export_validation_card"),
                         shape = MaterialTheme.shapes.small,
                         color = VyroColors.VideoEmerald.copy(alpha = 0.14f),
@@ -368,6 +373,7 @@ internal fun ExportStudioDialog(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .semantics { liveRegion = LiveRegionMode.Polite }
                             .testTag("export_error_card"),
                         shape = MaterialTheme.shapes.small,
                         color = VyroColors.CoralError.copy(alpha = 0.14f),

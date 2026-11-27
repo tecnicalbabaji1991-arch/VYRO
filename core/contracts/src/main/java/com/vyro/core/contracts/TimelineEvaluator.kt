@@ -7,6 +7,8 @@ import com.vyro.core.model.Clip
 import com.vyro.core.model.ClipTiming
 import com.vyro.core.model.Sequence
 import com.vyro.core.model.Track
+import com.vyro.core.model.TransitionSpec
+import kotlin.math.abs
 
 /**
  * Authoritative deterministic timeline evaluator & command reducer.
@@ -27,12 +29,15 @@ object TimelineEvaluator {
             is EditCommand.UpdateTextSpec -> applyUpdateTextSpec(sequence, command)
             is EditCommand.UpdateFilter -> applyUpdateFilter(sequence, command)
             is EditCommand.UpdateEffect -> applyUpdateEffect(sequence, command)
+            is EditCommand.UpdateTransition -> applyUpdateTransition(sequence, command)
             is EditCommand.UpdateAudioSpec -> applyUpdateAudioSpec(sequence, command)
             is EditCommand.UpdateCanvasAspect -> EngineResult.Success(
                 sequence.copy(width = command.preset.width, height = command.preset.height),
             )
             is EditCommand.UpdateCover -> EngineResult.Success(sequence.copy(coverSpec = command.coverSpec))
             is EditCommand.ToggleKeyframe -> applyToggleKeyframe(sequence, command)
+            is EditCommand.AddOrUpdateKeyframe -> applyAddOrUpdateKeyframe(sequence, command)
+            is EditCommand.RemoveKeyframe -> applyRemoveKeyframe(sequence, command)
             is EditCommand.ToggleTrackMute -> applyToggleTrackMute(sequence, command)
             is EditCommand.ToggleTrackLock -> applyToggleTrackLock(sequence, command)
         }
@@ -183,7 +188,25 @@ object TimelineEvaluator {
                         } else {
                             track.copy(
                                 clips = track.clips
-                                    .map { if (it.id == cmd.clipId) it.copy(timing = newTiming) else it }
+                                    .map {
+                                        if (it.id == cmd.clipId) {
+                                            val maxKfOffset = newTiming.timelineDurationUs
+                                            val clampedKeyframes = it.keyframes
+                                                .filter { kf -> kf.offsetUs in 0L..maxKfOffset }
+                                                .sortedBy { kf -> kf.offsetUs }
+                                            it.copy(
+                                                timing = newTiming,
+                                                keyframes = clampedKeyframes,
+                                                keyframesEnabled = if (it.keyframes.isNotEmpty()) {
+                                                    it.keyframesEnabled && clampedKeyframes.isNotEmpty()
+                                                } else {
+                                                    it.keyframesEnabled
+                                                },
+                                            )
+                                        } else {
+                                            it
+                                        }
+                                    }
                                     .sortedBy { it.timing.timelineStartUs },
                             )
                         }
@@ -231,24 +254,37 @@ object TimelineEvaluator {
             return invalidEdit("Split point maps outside valid source bounds.")
         }
 
-        val leftClip = clip.copy(
-            timing = clip.timing.copy(sourceOutUs = splitSourceUs),
-        )
+        val leftTiming = clip.timing.copy(sourceOutUs = splitSourceUs)
         val rightTiming = ClipTiming(
-            timelineStartUs = leftClip.timing.timelineEndUs,
+            timelineStartUs = leftTiming.timelineEndUs,
             sourceInUs = splitSourceUs,
             sourceOutUs = clip.timing.sourceOutUs,
             playbackSpeed = clip.timing.playbackSpeed,
         )
-        if (leftClip.timing.timelineDurationUs < MIN_CLIP_DURATION_US ||
-            rightTiming.timelineDurationUs < MIN_CLIP_DURATION_US
+        val leftDurationUs = leftTiming.timelineDurationUs
+        val rightDurationUs = rightTiming.timelineDurationUs
+        if (leftDurationUs < MIN_CLIP_DURATION_US ||
+            rightDurationUs < MIN_CLIP_DURATION_US
         ) {
             return invalidEdit("Split slices must be at least ${MIN_CLIP_DURATION_US / 1000}ms.")
         }
+        val leftKeyframes = clip.keyframes.filter { it.offsetUs in 0L..leftDurationUs }
+        val rightKeyframes = clip.keyframes.mapNotNull { kf ->
+            val shifted = kf.offsetUs - leftDurationUs
+            if (shifted in 0L..rightDurationUs) kf.copy(offsetUs = shifted) else null
+        }
+        val leftClip = clip.copy(
+            timing = leftTiming,
+            keyframes = leftKeyframes,
+            keyframesEnabled = if (clip.keyframes.isNotEmpty()) clip.keyframesEnabled && leftKeyframes.isNotEmpty() else clip.keyframesEnabled,
+        )
         val rightClip = clip.copy(
             id = cmd.newRightClipId,
             label = "${clip.label} (2)",
             timing = rightTiming,
+            transitionIn = TransitionSpec(),
+            keyframes = rightKeyframes,
+            keyframesEnabled = clip.keyframesEnabled && rightKeyframes.isNotEmpty(),
         )
 
         val updatedTracks = sequence.tracks.map { t ->
@@ -380,6 +416,39 @@ object TimelineEvaluator {
         else invalidEdit("Clip ${cmd.clipId} not found.")
     }
 
+    private fun applyUpdateTransition(sequence: Sequence, cmd: EditCommand.UpdateTransition): EngineResult<Sequence> {
+        var found = false
+        var locked = false
+        val clampedSpec = cmd.transitionSpec.copy(
+            durationUs = cmd.transitionSpec.durationUs.coerceIn(100_000L, 2_000_000L),
+        )
+        val updatedTracks = sequence.tracks.map { track ->
+            val hasTarget = track.clips.any { it.id == cmd.clipId }
+            if (hasTarget) {
+                found = true
+                if (track.isLocked) {
+                    locked = true
+                    track
+                } else {
+                    track.copy(
+                        clips = track.clips.map { clip ->
+                            if (clip.id == cmd.clipId) {
+                                clip.copy(transitionIn = clampedSpec)
+                            } else {
+                                clip
+                            }
+                        },
+                    )
+                }
+            } else {
+                track
+            }
+        }
+        if (!found) return invalidEdit("Clip ${cmd.clipId} not found.")
+        if (locked) return invalidEdit("Cannot edit transition on a locked track.")
+        return EngineResult.Success(sequence.copy(tracks = updatedTracks))
+    }
+
     private fun applyUpdateAudioSpec(sequence: Sequence, cmd: EditCommand.UpdateAudioSpec): EngineResult<Sequence> {
         var found = false
         var locked = false
@@ -432,6 +501,91 @@ object TimelineEvaluator {
         }
         return if (found) EngineResult.Success(sequence.copy(tracks = updatedTracks))
         else invalidEdit("Clip ${cmd.clipId} not found.")
+    }
+
+    private fun applyAddOrUpdateKeyframe(sequence: Sequence, cmd: EditCommand.AddOrUpdateKeyframe): EngineResult<Sequence> {
+        var found = false
+        var locked = false
+        val toleranceUs = (sequence.frameRate.frameDurationUs / 2L).coerceAtLeast(16_000L)
+        val updatedTracks = sequence.tracks.map { track ->
+            val hasTarget = track.clips.any { it.id == cmd.clipId }
+            if (hasTarget) {
+                found = true
+                if (track.isLocked) {
+                    locked = true
+                    track
+                } else {
+                    track.copy(
+                        clips = track.clips.map { clip ->
+                            if (clip.id == cmd.clipId) {
+                                val maxOffset = clip.timing.timelineDurationUs.coerceAtLeast(0L)
+                                val snappedOffset = sequence.frameRate
+                                    .snapToFrame(cmd.keyframe.offsetUs.coerceIn(0L, maxOffset))
+                                    .coerceIn(0L, maxOffset)
+                                val normalizedKf = cmd.keyframe.copy(
+                                    offsetUs = snappedOffset,
+                                    normalizedX = cmd.keyframe.normalizedX.coerceIn(0.05f, 0.95f),
+                                    normalizedY = cmd.keyframe.normalizedY.coerceIn(0.05f, 0.95f),
+                                    scale = cmd.keyframe.scale.coerceIn(0.35f, 3.0f),
+                                    opacity = cmd.keyframe.opacity.coerceIn(0.0f, 1.0f),
+                                )
+                                val filtered = clip.keyframes.filterNot { existing ->
+                                    abs(existing.offsetUs - snappedOffset) <= toleranceUs
+                                }
+                                clip.copy(
+                                    keyframesEnabled = true,
+                                    keyframes = (filtered + normalizedKf).sortedBy { it.offsetUs },
+                                )
+                            } else {
+                                clip
+                            }
+                        },
+                    )
+                }
+            } else {
+                track
+            }
+        }
+        if (!found) return invalidEdit("Clip ${cmd.clipId} not found.")
+        if (locked) return invalidEdit("Cannot edit keyframes on a locked track.")
+        return EngineResult.Success(sequence.copy(tracks = updatedTracks))
+    }
+
+    private fun applyRemoveKeyframe(sequence: Sequence, cmd: EditCommand.RemoveKeyframe): EngineResult<Sequence> {
+        var found = false
+        var locked = false
+        val toleranceUs = (sequence.frameRate.frameDurationUs / 2L).coerceAtLeast(16_000L)
+        val updatedTracks = sequence.tracks.map { track ->
+            val hasTarget = track.clips.any { it.id == cmd.clipId }
+            if (hasTarget) {
+                found = true
+                if (track.isLocked) {
+                    locked = true
+                    track
+                } else {
+                    track.copy(
+                        clips = track.clips.map { clip ->
+                            if (clip.id == cmd.clipId) {
+                                val remaining = clip.keyframes.filterNot { existing ->
+                                    abs(existing.offsetUs - cmd.offsetUs) <= toleranceUs
+                                }
+                                clip.copy(
+                                    keyframes = remaining,
+                                    keyframesEnabled = remaining.isNotEmpty(),
+                                )
+                            } else {
+                                clip
+                            }
+                        },
+                    )
+                }
+            } else {
+                track
+            }
+        }
+        if (!found) return invalidEdit("Clip ${cmd.clipId} not found.")
+        if (locked) return invalidEdit("Cannot remove keyframe on a locked track.")
+        return EngineResult.Success(sequence.copy(tracks = updatedTracks))
     }
 
     private fun applyToggleTrackMute(sequence: Sequence, cmd: EditCommand.ToggleTrackMute): EngineResult<Sequence> {

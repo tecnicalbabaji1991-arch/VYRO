@@ -1,6 +1,7 @@
 package com.vyro.feature.editor
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -53,21 +55,28 @@ import com.vyro.core.contracts.EngineTelemetry
 import com.vyro.core.contracts.ExportCoordinatorContract
 import com.vyro.core.contracts.ExportDiagnosticsSnapshot
 import com.vyro.core.contracts.ExportPhase
+import com.vyro.core.contracts.HardeningDiagnosticsSnapshot
 import com.vyro.core.contracts.MemoryPressureLevel
 import com.vyro.core.contracts.PersistenceDiagnosticsSnapshot
 import com.vyro.core.contracts.PersistenceSaveStatus
 import com.vyro.core.contracts.PlaybackDiagnosticsSnapshot
+import com.vyro.core.contracts.ProductionHardeningSuiteReport
+import com.vyro.core.contracts.ProductionHardeningVerifier
 import com.vyro.core.contracts.ProjectRepository
 import com.vyro.core.contracts.RenderDiagnosticsSnapshot
+import com.vyro.core.contracts.RuntimeHardeningMonitorContract
 import com.vyro.core.contracts.SmokeTestReport
+import com.vyro.core.contracts.ThermalStatusLevel
 import com.vyro.core.designsystem.VyroBadge
 import com.vyro.core.designsystem.VyroColors
 import com.vyro.core.designsystem.VyroStudioPanel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class DiagnosticsUiState(
     val telemetry: EngineTelemetry? = null,
@@ -78,8 +87,11 @@ data class DiagnosticsUiState(
     val cacheTelemetry: CacheMemoryDiagnosticsSnapshot = CacheMemoryDiagnosticsSnapshot(),
     val persistenceTelemetry: PersistenceDiagnosticsSnapshot = PersistenceDiagnosticsSnapshot(),
     val exportTelemetry: ExportDiagnosticsSnapshot = ExportDiagnosticsSnapshot(),
+    val hardeningTelemetry: HardeningDiagnosticsSnapshot = HardeningDiagnosticsSnapshot(),
     val smokeTestReport: SmokeTestReport? = null,
     val isRunningSmoke: Boolean = false,
+    val hardeningReport: ProductionHardeningSuiteReport? = null,
+    val isRunningHardeningSuite: Boolean = false,
     val recentLogs: List<StructuredLogEntry> = emptyList(),
 )
 
@@ -91,6 +103,7 @@ class DiagnosticsViewModel(
     private val cacheManager: CacheAndProxyManagerContract? = null,
     private val projectRepository: ProjectRepository? = null,
     private val exportCoordinator: ExportCoordinatorContract? = null,
+    private val runtimeHardeningMonitor: RuntimeHardeningMonitorContract? = null,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DiagnosticsUiState())
@@ -133,11 +146,19 @@ class DiagnosticsViewModel(
                 }
             }
         }
+        runtimeHardeningMonitor?.let { monitor ->
+            viewModelScope.launch {
+                monitor.snapshot.collect { hardeningSnap ->
+                    _uiState.update { it.copy(hardeningTelemetry = hardeningSnap) }
+                }
+            }
+        }
         refresh()
     }
 
     fun refresh() {
         viewModelScope.launch {
+            runtimeHardeningMonitor?.refreshSystemTelemetry()
             engineSession.initialize()
             val t = engineSession.telemetry()
             val caps = engineSession.queryDeviceCapabilities()
@@ -170,7 +191,36 @@ class DiagnosticsViewModel(
 
     fun triggerMemoryTrim() {
         cacheManager?.onTrimMemory(MemoryPressureLevel.LOW)
+        runtimeHardeningMonitor?.refreshSystemTelemetry()
         _uiState.update { it.copy(recentLogs = VyroLogger.recentEntries().asReversed().take(20)) }
+    }
+
+    fun runProductionHardeningSuite() {
+        if (_uiState.value.isRunningHardeningSuite) return
+        viewModelScope.launch {
+            _uiState.update { it.copy(isRunningHardeningSuite = true) }
+            val timelineReport = withContext(Dispatchers.Default) {
+                ProductionHardeningVerifier.runLongSessionTimelineAndCacheStress(
+                    editIterations = 120,
+                    cachePutIterations = 240,
+                )
+            }
+            val sessionSmoke = engineSession.runLifecycleSmokeTest(iterations = 25)
+            val leakedSessions = (sessionSmoke as? EngineResult.Success)?.value?.leakedSessions ?: 0
+            val combinedReport = timelineReport.copy(
+                leakedSessions = leakedSessions,
+                passed = timelineReport.passed && leakedSessions == 0,
+            )
+            runtimeHardeningMonitor?.recordStressSuiteResult(combinedReport)
+            runtimeHardeningMonitor?.refreshSystemTelemetry()
+            _uiState.update {
+                it.copy(
+                    isRunningHardeningSuite = false,
+                    hardeningReport = combinedReport,
+                    recentLogs = VyroLogger.recentEntries().asReversed().take(20),
+                )
+            }
+        }
     }
 
     class Factory(
@@ -181,6 +231,7 @@ class DiagnosticsViewModel(
         private val cacheManager: CacheAndProxyManagerContract? = null,
         private val projectRepository: ProjectRepository? = null,
         private val exportCoordinator: ExportCoordinatorContract? = null,
+        private val runtimeHardeningMonitor: RuntimeHardeningMonitorContract? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
@@ -192,6 +243,7 @@ class DiagnosticsViewModel(
                 cacheManager = cacheManager,
                 projectRepository = projectRepository,
                 exportCoordinator = exportCoordinator,
+                runtimeHardeningMonitor = runtimeHardeningMonitor,
             ) as T
         }
     }
@@ -234,14 +286,20 @@ fun DiagnosticsScreen(
             )
         },
     ) { innerPadding ->
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .testTag("diagnostics_lazy_column"),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter,
         ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 840.dp)
+                    .testTag("diagnostics_lazy_column"),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
             item {
                 VyroStudioPanel(modifier = Modifier.fillMaxWidth()) {
                     Column(
@@ -605,6 +663,84 @@ fun DiagnosticsScreen(
                 }
             }
 
+            item {
+                val h = state.hardeningTelemetry
+                VyroStudioPanel(modifier = Modifier.fillMaxWidth().testTag("diagnostics_phase12_hardening_card")) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("Phase 12 Production Hardening & Device Matrix", style = MaterialTheme.typography.titleMedium)
+                            VyroBadge(
+                                label = if (h.playPolicyCompliant) "PLAY READY" else "AUDIT",
+                                accent = if (h.playPolicyCompliant) VyroColors.VideoEmerald else VyroColors.CoralError,
+                            )
+                        }
+                        Text(
+                            text = "Tier: ${h.deviceTier.label}  •  RAM: ${h.availableRamMb}/${h.totalRamMb} MB  •  Thermal: ${h.thermalStatus.label}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (h.thermalStatus.severityRank >= ThermalStatusLevel.SEVERE.severityRank) {
+                                VyroColors.StudioAmber
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        Text(
+                            text = "Cap: ${h.recommendedMaxExportPreset.label} @ ${h.recommendedPreviewFpsCap}fps  •  Proxy Advised: ${h.adaptiveProxyRecommended}  •  Battery Saver: ${h.isPowerSaveMode}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            text = h.policyComplianceSummary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = VyroColors.ElectricCyan,
+                        )
+                        Button(
+                            onClick = viewModel::runProductionHardeningSuite,
+                            enabled = !state.isRunningHardeningSuite,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("diagnostics_run_hardening_stress_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary,
+                            ),
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                if (state.isRunningHardeningSuite) {
+                                    stringResource(R.string.diagnostics_running_hardening)
+                                } else {
+                                    stringResource(R.string.diagnostics_run_hardening_stress)
+                                },
+                            )
+                        }
+                        state.hardeningReport?.let { report ->
+                            Row(
+                                modifier = Modifier.testTag("diagnostics_phase12_stress_result"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Icon(
+                                    imageVector = if (report.passed) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = if (report.passed) VyroColors.VideoEmerald else VyroColors.CoralError,
+                                )
+                                Text(
+                                    text = "${report.summary} (Leaks: ${report.leakedSessions})",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             state.capabilities?.let { caps ->
                 item {
                     VyroStudioPanel(modifier = Modifier.fillMaxWidth()) {
@@ -673,6 +809,7 @@ fun DiagnosticsScreen(
                     }
                 }
             }
+        }
         }
     }
 }

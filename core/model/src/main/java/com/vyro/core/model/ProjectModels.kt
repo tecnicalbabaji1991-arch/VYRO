@@ -57,6 +57,27 @@ enum class BlendMode(val displayName: String) {
     OVERLAY("Overlay"),
 }
 
+enum class TransitionPreset(val displayName: String) {
+    NONE("None"),
+    CROSS_DISSOLVE("Dissolve"),
+    SLIDE_LEFT("Slide"),
+    ZOOM_IN("Zoom"),
+}
+
+data class TransitionSpec(
+    val preset: TransitionPreset = TransitionPreset.NONE,
+    val durationUs: Long = 500_000L,
+)
+
+data class TransformKeyframe(
+    val offsetUs: Long,
+    val normalizedX: Float = 0.5f,
+    val normalizedY: Float = 0.5f,
+    val scale: Float = 1.0f,
+    val rotationDegrees: Float = 0.0f,
+    val opacity: Float = 1.0f,
+)
+
 data class CropRect(
     val left: Float = 0f,
     val top: Float = 0f,
@@ -166,7 +187,9 @@ data class Clip(
     val audioSpec: AudioClipSpec? = null,
     val filterPreset: ColorFilterPreset = ColorFilterPreset.ORIGINAL,
     val effectPreset: VisualEffectPreset = VisualEffectPreset.NONE,
+    val transitionIn: TransitionSpec = TransitionSpec(),
     val keyframesEnabled: Boolean = false,
+    val keyframes: List<TransformKeyframe> = emptyList(),
     val accentColorArgb: Long = 0xFFFFFFFFL,
 )
 

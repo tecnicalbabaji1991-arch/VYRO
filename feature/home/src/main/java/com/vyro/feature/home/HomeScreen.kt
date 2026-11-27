@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -123,11 +124,13 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(innerPadding)
                 .navigationBarsPadding(),
+            contentAlignment = Alignment.TopCenter,
         ) {
             val gridColumns = if (maxWidth >= 720.dp) 5 else 3
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .widthIn(max = 920.dp)
                     .padding(horizontal = 16.dp),
             ) {
                 // 1. Brand Top Bar: VYRO + STUDIO pill + Settings/Diagnostics gear icon
@@ -461,7 +464,7 @@ private fun DraftsHeaderRow(
             )
             IconButton(
                 onClick = onInfoClick,
-                modifier = Modifier.size(36.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Default.Info,
@@ -618,7 +621,7 @@ private fun DraftSquareTile(
         ) {
             IconButton(
                 onClick = { menuExpanded = true },
-                modifier = Modifier.size(34.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     imageVector = Icons.Default.MoreHoriz,

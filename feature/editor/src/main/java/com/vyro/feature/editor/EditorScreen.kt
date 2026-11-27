@@ -6,7 +6,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -18,53 +17,36 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Animation
-import androidx.compose.material.icons.filled.AspectRatio
-import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ColorLens
-import androidx.compose.material.icons.filled.ContentCut
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Diamond
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FilterVintage
-import androidx.compose.material.icons.filled.FontDownload
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PermMedia
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,6 +57,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -88,11 +71,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -100,20 +92,24 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.vyro.core.contracts.ExportConfig
+import com.vyro.core.contracts.PersistenceSaveStatus
 import com.vyro.core.contracts.RecoverySource
+import com.vyro.core.designsystem.VyroBadge
 import com.vyro.core.designsystem.VyroColors
 import com.vyro.core.designsystem.VyroStudioPanel
 import com.vyro.core.designsystem.VyroTimecodeStyle
-import com.vyro.core.model.AspectRatioPreset
-import com.vyro.core.model.ColorFilterPreset
+import com.vyro.core.model.AudioClipSpec
 import com.vyro.core.model.CoverSpec
+import com.vyro.core.model.MediaKind
+import com.vyro.core.model.Sequence
 import com.vyro.core.model.TimecodeFormatter
-import com.vyro.core.model.VisualEffectPreset
+import com.vyro.core.model.TrackType
+import com.vyro.core.model.TransitionPreset
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-
-import com.vyro.core.model.AudioClipSpec
+import kotlin.math.roundToInt
 
 private enum class ActiveEditorModal {
     NONE,
@@ -127,15 +123,6 @@ private enum class ActiveEditorModal {
     COVER_EDIT,
     TRANSFORM_BLEND,
     AUDIO_MIXER,
-}
-
-private enum class EditorToolMode {
-    ROOT,
-    TRIM,
-    TEXT,
-    EFFECT,
-    CANVAS,
-    FILTER,
 }
 
 @Composable
@@ -172,10 +159,19 @@ fun EditorScreen(
     }
 
     BackHandler {
-        if (toolMode != EditorToolMode.ROOT) {
+        if (state.isFullscreen) {
+            viewModel.toggleFullscreen()
+        } else if (toolMode != EditorToolMode.ROOT) {
             toolMode = EditorToolMode.ROOT
         } else {
             handleExit()
+        }
+    }
+
+    // Automatically exit text sub-toolbar if selection moves away from a text clip
+    LaunchedEffect(state.selectedClipId, state.isSelectedClipText) {
+        if (toolMode == EditorToolMode.TEXT && !state.isSelectedClipText) {
+            toolMode = EditorToolMode.ROOT
         }
     }
 
@@ -228,261 +224,340 @@ fun EditorScreen(
 
         val sequence = state.sequence ?: return@Scaffold
 
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
         ) {
-            // 1. Top Bar: X on left, Assets + (?) + Diagnostics + Export on right
-            if (!state.isFullscreen) {
-                EditorTopBar(
-                    hasMissingMedia = state.missingAssets.isNotEmpty(),
-                    onClose = handleExit,
-                    onOpenAssets = { activeModal = ActiveEditorModal.MEDIA_ASSETS },
-                    onHelp = { activeModal = ActiveEditorModal.HELP },
-                    onDiagnostics = onOpenDiagnostics,
-                    onExport = {
-                        viewModel.prepareExportSheet()
-                        activeModal = ActiveEditorModal.EXPORT_STATUS
-                    },
-                )
+            val availableWidth = maxWidth
+            val availableHeight = maxHeight
+            val isExpandedLayout = availableWidth >= 720.dp && !state.isFullscreen
+            val isCompactHeight = availableHeight < 620.dp
 
-                if (state.showRecoveryBanner) {
-                    RecoverySnapshotBanner(
-                        recoverySource = state.recoverySource,
-                        recoveredCommands = state.recoveredCommandLabels,
-                        canRevert = state.hasCommittedBaseline,
-                        onKeep = viewModel::dismissRecoveryBanner,
-                        onRevert = viewModel::revertToCommittedBaseline,
-                    )
-                }
-
-                if (state.missingAssets.isNotEmpty()) {
-                    MissingMediaBanner(
-                        missingCount = state.missingAssets.size,
-                        isRelinking = state.isRelinking,
-                        onRelink = {
-                            pendingRelinkAssetId = state.missingAssets.first().assetId
-                            relinkLauncher.launch(arrayOf("video/*", "image/*", "audio/*"))
+            Column(modifier = Modifier.fillMaxSize()) {
+                if (!state.isFullscreen) {
+                    EditorTopBar(
+                        projectTitle = state.projectTitle,
+                        saveStatus = state.saveStatus,
+                        showTitle = availableWidth >= 380.dp,
+                        hasMissingMedia = state.missingAssets.isNotEmpty(),
+                        compact = isCompactHeight,
+                        onClose = handleExit,
+                        onOpenAssets = { activeModal = ActiveEditorModal.MEDIA_ASSETS },
+                        onHelp = { activeModal = ActiveEditorModal.HELP },
+                        onDiagnostics = onOpenDiagnostics,
+                        onExport = {
+                            viewModel.prepareExportSheet()
+                            activeModal = ActiveEditorModal.EXPORT_STATUS
                         },
-                        onInspect = { activeModal = ActiveEditorModal.MEDIA_ASSETS },
                     )
-                }
-            }
 
-            // 2. Preview Stage
-            EditorPreviewCanvas(
-                sequence = sequence,
-                activeClips = state.activeClips,
-                selectedClipId = state.selectedClipId,
-                playheadUs = state.playheadUs,
-                isFullscreen = state.isFullscreen,
-                playbackDiagnostics = state.playbackDiagnostics,
-                renderGraph = state.renderGraph,
-                onSurfaceAttached = viewModel::attachPreviewSurface,
-                onSurfaceDetached = viewModel::detachPreviewSurface,
-                onExitFullscreen = viewModel::toggleFullscreen,
-                onSelectClip = viewModel::selectClip,
-                onUpdateTransform = viewModel::updateTransform,
-                onRequestTextEdit = { clipId ->
-                    viewModel.selectClip(clipId)
-                    activeModal = ActiveEditorModal.EDIT_TEXT
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-            )
-
-            // 3. Transport Bar matching Screenshot 1: |<  ▶  0:00.0 / 0:04.0  ↶  ↷  ⛶
-            TransportControlRow(
-                playheadUs = state.playheadUs,
-                durationUs = sequence.durationUs,
-                isPlaying = state.isPlaying,
-                isFullscreen = state.isFullscreen,
-                canUndo = state.canUndo,
-                canRedo = state.canRedo,
-                onJumpStart = viewModel::jumpToStart,
-                onTogglePlay = viewModel::togglePlayPause,
-                onUndo = viewModel::undo,
-                onRedo = viewModel::redo,
-                onToggleFullscreen = viewModel::toggleFullscreen,
-            )
-
-            if (!state.isFullscreen) {
-                // 4. Timeline Row matching Screenshot 1:
-                // Fixed center crimson playhead; timeline, Unmute/Cover, and + Add audio scroll horizontally underneath
-                val hasSecondaryClips = sequence.tracks.any {
-                    it.type != com.vyro.core.model.TrackType.VIDEO && it.clips.isNotEmpty()
-                }
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(178.dp)
-                        .background(Color(0xFF13151B))
-                        .padding(vertical = 4.dp),
-                ) {
-                    val density = LocalDensity.current
-                    val centerXPx = with(density) { (maxWidth / 2f).toPx() }
-                    val pxPerUs = with(density) {
-                        (TimelineSurfaceView.BASE_DP_PER_SECOND.dp.toPx() * state.zoomScale) / 1_000_000f
+                    if (state.showRecoveryBanner) {
+                        RecoverySnapshotBanner(
+                            recoverySource = state.recoverySource,
+                            recoveredCommands = state.recoveredCommandLabels,
+                            canRevert = state.hasCommittedBaseline,
+                            onKeep = viewModel::dismissRecoveryBanner,
+                            onRevert = viewModel::revertToCommittedBaseline,
+                        )
                     }
-                    val scrollOffsetPx = state.playheadUs * pxPerUs
 
-                    AndroidView(
+                    if (state.missingAssets.isNotEmpty()) {
+                        MissingMediaBanner(
+                            missingCount = state.missingAssets.size,
+                            isRelinking = state.isRelinking,
+                            onRelink = {
+                                pendingRelinkAssetId = state.missingAssets.first().assetId
+                                relinkLauncher.launch(arrayOf("video/*", "image/*", "audio/*"))
+                            },
+                            onInspect = { activeModal = ActiveEditorModal.MEDIA_ASSETS },
+                        )
+                    }
+                }
+
+                if (isExpandedLayout) {
+                    // Medium/Expanded Tablet Studio Layout: Split Preview + Side Inspector Rail, full-width bottom timeline
+                    Row(
                         modifier = Modifier
-                            .fillMaxSize()
-                            .testTag("timeline_surface_view"),
-                        factory = { ctx ->
-                            TimelineSurfaceView(ctx).apply {
-                                onScrubPlayheadUs = { viewModel.scrubTo(it) }
-                                onSelectClip = { viewModel.selectClip(it) }
-                                onMoveClip = { id, start -> viewModel.moveClip(id, start) }
-                                onTrimClip = { id, s, inUs, outUs -> viewModel.trimClip(id, s, inUs, outUs) }
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .testTag("editor_expanded_layout"),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        ) {
+                            EditorPreviewCanvas(
+                                sequence = sequence,
+                                activeClips = state.activeClips,
+                                selectedClipId = state.selectedClipId,
+                                playheadUs = state.playheadUs,
+                                isFullscreen = state.isFullscreen,
+                                playbackDiagnostics = state.playbackDiagnostics,
+                                renderGraph = state.renderGraph,
+                                onSurfaceAttached = viewModel::attachPreviewSurface,
+                                onSurfaceDetached = viewModel::detachPreviewSurface,
+                                onExitFullscreen = viewModel::toggleFullscreen,
+                                onSelectClip = viewModel::selectClip,
+                                onUpdateTransform = viewModel::updateTransform,
+                                onRequestTextEdit = { clipId ->
+                                    viewModel.selectClip(clipId)
+                                    activeModal = ActiveEditorModal.EDIT_TEXT
+                                },
+                                onOpenTransformBlend = { activeModal = ActiveEditorModal.TRANSFORM_BLEND },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f),
+                            )
+
+                            TransportControlRow(
+                                playheadUs = state.playheadUs,
+                                durationUs = sequence.durationUs,
+                                isPlaying = state.isPlaying,
+                                isFullscreen = state.isFullscreen,
+                                canUndo = state.canUndo,
+                                canRedo = state.canRedo,
+                                onJumpStart = viewModel::jumpToStart,
+                                onTogglePlay = viewModel::togglePlayPause,
+                                onUndo = viewModel::undo,
+                                onRedo = viewModel::redo,
+                                onToggleFullscreen = viewModel::toggleFullscreen,
+                            )
+                        }
+
+                        VerticalDivider(color = VyroColors.SteelDivider, thickness = 1.dp)
+
+                        Column(
+                            modifier = Modifier
+                                .width(300.dp)
+                                .fillMaxHeight()
+                                .background(VyroColors.Obsidian),
+                        ) {
+                            ContextualSelectionStrip(
+                                selectedClip = state.selectedClip,
+                                selectedTrack = state.selectedTrack,
+                                zoomScale = state.zoomScale,
+                                onToggleTrackLock = viewModel::toggleSelectedTrackLock,
+                                onClearSelection = { viewModel.selectClip(null) },
+                                onQuickEditText = { activeModal = ActiveEditorModal.EDIT_TEXT },
+                                onQuickOpenMixer = { activeModal = ActiveEditorModal.AUDIO_MIXER },
+                                onZoomOut = { viewModel.adjustZoom(-0.25f) },
+                                onZoomReset = viewModel::resetZoom,
+                                onZoomIn = { viewModel.adjustZoom(0.25f) },
+                            )
+                            HorizontalDivider(color = VyroColors.SteelDivider, thickness = 1.dp)
+                            BottomEditorToolStrip(
+                                toolMode = toolMode,
+                                isSideRail = true,
+                                isTextClipSelected = state.isSelectedClipText,
+                                hasSelection = state.selectedClip != null || state.primaryVideoClip != null,
+                                hasAudioTarget = state.primaryAudioTargetClip != null,
+                                isTrackLocked = state.isSelectedTrackLocked,
+                                proxyEnabled = state.proxyEnabled,
+                                keyframeActive = state.keyframeTargetClip?.keyframesEnabled == true,
+                                hasKeyframeAtPlayhead = state.hasKeyframeNearPlayhead,
+                                hasKeyframesOnClip = state.keyframeTargetClip?.keyframes?.isNotEmpty() == true,
+                                currentTransition = state.keyframeTargetClip?.transitionIn?.preset ?: TransitionPreset.NONE,
+                                currentFilter = state.primaryVideoClip?.filterPreset ?: com.vyro.core.model.ColorFilterPreset.ORIGINAL,
+                                currentEffect = state.primaryVideoClip?.effectPreset ?: com.vyro.core.model.VisualEffectPreset.NONE,
+                                currentWidth = sequence.width,
+                                currentHeight = sequence.height,
+                                onSelectMode = { toolMode = it },
+                                onAddTextAndOpenSubbar = {
+                                    if (!state.isSelectedClipText) viewModel.addTextClip()
+                                    toolMode = EditorToolMode.TEXT
+                                },
+                                onAddText = viewModel::addTextClip,
+                                onAddAudio = viewModel::addAudioClip,
+                                onToggleKeyframe = viewModel::toggleSelectedKeyframe,
+                                onSetKeyframeAtPlayhead = { viewModel.addOrUpdateKeyframeAtPlayhead() },
+                                onStepKeyframeScale = { viewModel.stepKeyframeScale() },
+                                onRemoveKeyframeAtPlayhead = viewModel::removeKeyframeAtPlayhead,
+                                onJumpPrevKeyframe = { viewModel.jumpToAdjacentKeyframe(false) },
+                                onJumpNextKeyframe = { viewModel.jumpToAdjacentKeyframe(true) },
+                                onSelectTransition = viewModel::setSelectedClipTransition,
+                                onEditText = { activeModal = ActiveEditorModal.EDIT_TEXT },
+                                onFont = { activeModal = ActiveEditorModal.FONT_PICKER },
+                                onColor = { activeModal = ActiveEditorModal.COLOR_PICKER },
+                                onAnimation = { activeModal = ActiveEditorModal.ANIMATION_PICKER },
+                                onSplit = viewModel::splitSelectedClip,
+                                onTrimShorter = { viewModel.nudgeSelectedClipEnd(-500_000L) },
+                                onTrimLonger = { viewModel.nudgeSelectedClipEnd(500_000L) },
+                                onStepBackward = { viewModel.stepFrame(false) },
+                                onStepForward = { viewModel.stepFrame(true) },
+                                onToggleTrackLock = viewModel::toggleSelectedTrackLock,
+                                onDelete = {
+                                    viewModel.deleteSelectedClip()
+                                    toolMode = EditorToolMode.ROOT
+                                },
+                                onSelectFilter = viewModel::setFilter,
+                                onSelectEffect = viewModel::setEffect,
+                                onSelectAspect = viewModel::setCanvasAspect,
+                                onOpenTransformBlend = { activeModal = ActiveEditorModal.TRANSFORM_BLEND },
+                                onOpenAudioMixer = { activeModal = ActiveEditorModal.AUDIO_MIXER },
+                                onToggleProxy = viewModel::toggleProxyPlayback,
+                                onRotateClip = viewModel::rotateSelectedClipQuarterTurn,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+
+                    HorizontalDivider(color = VyroColors.SteelDivider, thickness = 1.dp)
+
+                    TimelineStageDock(
+                        sequence = sequence,
+                        state = state,
+                        onScrub = viewModel::scrubTo,
+                        onSelectClip = viewModel::selectClip,
+                        onMoveClip = viewModel::moveClip,
+                        onTrimClip = viewModel::trimClip,
+                        onZoomScaleChanged = viewModel::setZoom,
+                        onLockedTrackInteraction = viewModel::notifyLockedTrackInteraction,
+                        onToggleMute = viewModel::toggleMuteClipAudio,
+                        onEditCover = { activeModal = ActiveEditorModal.COVER_EDIT },
+                        onAddAudio = viewModel::addAudioClip,
+                        onAddMediaClick = {
+                            coroutineScope.launch {
+                                viewModel.saveBeforeExit()
+                                withContext(Dispatchers.Main.immediate) {
+                                    onAddMedia(state.projectId)
+                                }
                             }
                         },
-                        update = { view ->
-                            view.frameRate = sequence.frameRate
-                            view.durationUs = if (sequence.durationUs > 0L) sequence.durationUs else 4_000_000L
-                            view.tracks = sequence.tracks
-                            view.selectedClipId = state.selectedClipId
-                            view.playheadUs = state.playheadUs
-                            view.zoomScale = state.zoomScale
-                            view.waveforms = state.waveforms
+                    )
+                } else {
+                    // Compact / Phone Portrait Layout matching studio visual reference
+                    EditorPreviewCanvas(
+                        sequence = sequence,
+                        activeClips = state.activeClips,
+                        selectedClipId = state.selectedClipId,
+                        playheadUs = state.playheadUs,
+                        isFullscreen = state.isFullscreen,
+                        playbackDiagnostics = state.playbackDiagnostics,
+                        renderGraph = state.renderGraph,
+                        onSurfaceAttached = viewModel::attachPreviewSurface,
+                        onSurfaceDetached = viewModel::detachPreviewSurface,
+                        onExitFullscreen = viewModel::toggleFullscreen,
+                        onSelectClip = viewModel::selectClip,
+                        onUpdateTransform = viewModel::updateTransform,
+                        onRequestTextEdit = { clipId ->
+                            viewModel.selectClip(clipId)
+                            activeModal = ActiveEditorModal.EDIT_TEXT
                         },
+                        onOpenTransformBlend = { activeModal = ActiveEditorModal.TRANSFORM_BLEND },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
                     )
 
-                    // Unmute clip audio + Cover ✎ anchored just left of 0:00 and scrolling with the timeline
-                    Box(
-                        modifier = Modifier.offset {
-                            IntOffset(
-                                x = (centerXPx - scrollOffsetPx - 128.dp.roundToPx()).roundToInt(),
-                                y = 40.dp.roundToPx(),
-                            )
-                        },
-                    ) {
-                        TimelineLeftColumn(
-                            isMuted = state.isClipAudioMuted,
-                            coverSpec = sequence.coverSpec,
+                    TransportControlRow(
+                        playheadUs = state.playheadUs,
+                        durationUs = sequence.durationUs,
+                        isPlaying = state.isPlaying,
+                        isFullscreen = state.isFullscreen,
+                        canUndo = state.canUndo,
+                        canRedo = state.canRedo,
+                        compact = isCompactHeight,
+                        onJumpStart = viewModel::jumpToStart,
+                        onTogglePlay = viewModel::togglePlayPause,
+                        onUndo = viewModel::undo,
+                        onRedo = viewModel::redo,
+                        onToggleFullscreen = viewModel::toggleFullscreen,
+                    )
+
+                    if (!state.isFullscreen) {
+                        TimelineStageDock(
+                            sequence = sequence,
+                            state = state,
+                            compact = isCompactHeight,
+                            onScrub = viewModel::scrubTo,
+                            onSelectClip = viewModel::selectClip,
+                            onMoveClip = viewModel::moveClip,
+                            onTrimClip = viewModel::trimClip,
+                            onZoomScaleChanged = viewModel::setZoom,
+                            onLockedTrackInteraction = viewModel::notifyLockedTrackInteraction,
                             onToggleMute = viewModel::toggleMuteClipAudio,
                             onEditCover = { activeModal = ActiveEditorModal.COVER_EDIT },
-                        )
-                    }
-
-                    // + Add audio pill anchored at 0:00 directly below the video track
-                    Surface(
-                        modifier = Modifier
-                            .offset {
-                                IntOffset(
-                                    x = (centerXPx - scrollOffsetPx).roundToInt(),
-                                    y = (if (hasSecondaryClips) 132.dp else 98.dp).roundToPx(),
-                                )
-                            }
-                            .widthIn(min = 148.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                            .clickable { viewModel.addAudioClip() }
-                            .testTag("add_audio_pill_button"),
-                        shape = RoundedCornerShape(6.dp),
-                        color = VyroColors.SlateControl,
-                    ) {
-                        Text(
-                            text = stringResource(R.string.editor_add_audio_pill),
-                            fontSize = 12.sp,
-                            color = VyroColors.TextSecondary,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-
-                    // Right-side pinned crimson + button matching Screenshot 1
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 42.dp, end = 8.dp)
-                            .background(Color(0xFF13151B).copy(alpha = 0.92f), RoundedCornerShape(10.dp))
-                            .padding(4.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Surface(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    coroutineScope.launch {
-                                        viewModel.saveBeforeExit()
-                                        withContext(Dispatchers.Main.immediate) {
-                                            onAddMedia(state.projectId)
-                                        }
+                            onAddAudio = viewModel::addAudioClip,
+                            onAddMediaClick = {
+                                coroutineScope.launch {
+                                    viewModel.saveBeforeExit()
+                                    withContext(Dispatchers.Main.immediate) {
+                                        onAddMedia(state.projectId)
                                     }
                                 }
-                                .testTag("add_media_button"),
-                            shape = RoundedCornerShape(8.dp),
-                            color = VyroColors.CrimsonAccent,
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = stringResource(R.string.editor_add_media_desc),
-                                    tint = Color.White,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                        }
+                            },
+                        )
+
+                        ContextualSelectionStrip(
+                            selectedClip = state.selectedClip,
+                            selectedTrack = state.selectedTrack,
+                            zoomScale = state.zoomScale,
+                            onToggleTrackLock = viewModel::toggleSelectedTrackLock,
+                            onClearSelection = { viewModel.selectClip(null) },
+                            onQuickEditText = { activeModal = ActiveEditorModal.EDIT_TEXT },
+                            onQuickOpenMixer = { activeModal = ActiveEditorModal.AUDIO_MIXER },
+                            onZoomOut = { viewModel.adjustZoom(-0.25f) },
+                            onZoomReset = viewModel::resetZoom,
+                            onZoomIn = { viewModel.adjustZoom(0.25f) },
+                        )
+
+                        BottomEditorToolStrip(
+                            toolMode = toolMode,
+                            isSideRail = false,
+                            isCompactHeight = isCompactHeight,
+                            isTextClipSelected = state.isSelectedClipText,
+                            hasSelection = state.selectedClip != null || state.primaryVideoClip != null,
+                            hasAudioTarget = state.primaryAudioTargetClip != null,
+                            isTrackLocked = state.isSelectedTrackLocked,
+                            proxyEnabled = state.proxyEnabled,
+                            keyframeActive = state.keyframeTargetClip?.keyframesEnabled == true,
+                            hasKeyframeAtPlayhead = state.hasKeyframeNearPlayhead,
+                            hasKeyframesOnClip = state.keyframeTargetClip?.keyframes?.isNotEmpty() == true,
+                            currentTransition = state.keyframeTargetClip?.transitionIn?.preset ?: TransitionPreset.NONE,
+                            currentFilter = state.primaryVideoClip?.filterPreset ?: com.vyro.core.model.ColorFilterPreset.ORIGINAL,
+                            currentEffect = state.primaryVideoClip?.effectPreset ?: com.vyro.core.model.VisualEffectPreset.NONE,
+                            currentWidth = sequence.width,
+                            currentHeight = sequence.height,
+                            onSelectMode = { toolMode = it },
+                            onAddTextAndOpenSubbar = {
+                                if (!state.isSelectedClipText) viewModel.addTextClip()
+                                toolMode = EditorToolMode.TEXT
+                            },
+                            onAddText = viewModel::addTextClip,
+                            onAddAudio = viewModel::addAudioClip,
+                            onToggleKeyframe = viewModel::toggleSelectedKeyframe,
+                            onSetKeyframeAtPlayhead = { viewModel.addOrUpdateKeyframeAtPlayhead() },
+                            onStepKeyframeScale = { viewModel.stepKeyframeScale() },
+                            onRemoveKeyframeAtPlayhead = viewModel::removeKeyframeAtPlayhead,
+                            onJumpPrevKeyframe = { viewModel.jumpToAdjacentKeyframe(false) },
+                            onJumpNextKeyframe = { viewModel.jumpToAdjacentKeyframe(true) },
+                            onSelectTransition = viewModel::setSelectedClipTransition,
+                            onEditText = { activeModal = ActiveEditorModal.EDIT_TEXT },
+                            onFont = { activeModal = ActiveEditorModal.FONT_PICKER },
+                            onColor = { activeModal = ActiveEditorModal.COLOR_PICKER },
+                            onAnimation = { activeModal = ActiveEditorModal.ANIMATION_PICKER },
+                            onSplit = viewModel::splitSelectedClip,
+                            onTrimShorter = { viewModel.nudgeSelectedClipEnd(-500_000L) },
+                            onTrimLonger = { viewModel.nudgeSelectedClipEnd(500_000L) },
+                            onStepBackward = { viewModel.stepFrame(false) },
+                            onStepForward = { viewModel.stepFrame(true) },
+                            onToggleTrackLock = viewModel::toggleSelectedTrackLock,
+                            onDelete = {
+                                viewModel.deleteSelectedClip()
+                                toolMode = EditorToolMode.ROOT
+                            },
+                            onSelectFilter = viewModel::setFilter,
+                            onSelectEffect = viewModel::setEffect,
+                            onSelectAspect = viewModel::setCanvasAspect,
+                            onOpenTransformBlend = { activeModal = ActiveEditorModal.TRANSFORM_BLEND },
+                            onOpenAudioMixer = { activeModal = ActiveEditorModal.AUDIO_MIXER },
+                            onToggleProxy = viewModel::toggleProxyPlayback,
+                            onRotateClip = viewModel::rotateSelectedClipQuarterTurn,
+                        )
                     }
-
-                    // Fixed horizontal-center crimson playhead needle (stationary while timeline scrolls)
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .padding(top = 18.dp, bottom = 4.dp)
-                            .width(2.5.dp)
-                            .fillMaxHeight()
-                            .background(VyroColors.CrimsonAccent)
-                            .testTag("fixed_center_playhead"),
-                    )
                 }
-
-                // 5. Bottom Contextual Tool Strip matching Screenshot 1
-                BottomEditorToolStrip(
-                    toolMode = toolMode,
-                    isTextClipSelected = state.isSelectedClipText,
-                    hasSelection = state.selectedClip != null || state.primaryVideoClip != null,
-                    hasAudioTarget = state.primaryAudioTargetClip != null,
-                    proxyEnabled = state.proxyEnabled,
-                    keyframeActive = state.selectedClip?.keyframesEnabled == true,
-                    currentFilter = state.primaryVideoClip?.filterPreset ?: ColorFilterPreset.ORIGINAL,
-                    currentEffect = state.primaryVideoClip?.effectPreset ?: VisualEffectPreset.NONE,
-                    currentWidth = sequence.width,
-                    currentHeight = sequence.height,
-                    onSelectMode = { toolMode = it },
-                    onAddTextAndOpenSubbar = {
-                        if (!state.isSelectedClipText) {
-                            viewModel.addTextClip()
-                        }
-                        toolMode = EditorToolMode.TEXT
-                    },
-                    onAddText = viewModel::addTextClip,
-                    onAddAudio = viewModel::addAudioClip,
-                    onToggleKeyframe = viewModel::toggleSelectedKeyframe,
-                    onEditText = { activeModal = ActiveEditorModal.EDIT_TEXT },
-                    onFont = { activeModal = ActiveEditorModal.FONT_PICKER },
-                    onColor = { activeModal = ActiveEditorModal.COLOR_PICKER },
-                    onAnimation = { activeModal = ActiveEditorModal.ANIMATION_PICKER },
-                    onSplit = viewModel::splitSelectedClip,
-                    onTrimShorter = { viewModel.nudgeSelectedClipEnd(-500_000L) },
-                    onTrimLonger = { viewModel.nudgeSelectedClipEnd(500_000L) },
-                    onStepBackward = { viewModel.stepFrame(false) },
-                    onStepForward = { viewModel.stepFrame(true) },
-                    onDelete = {
-                        viewModel.deleteSelectedClip()
-                        toolMode = EditorToolMode.ROOT
-                    },
-                    onSelectFilter = viewModel::setFilter,
-                    onSelectEffect = viewModel::setEffect,
-                    onSelectAspect = viewModel::setCanvasAspect,
-                    onOpenTransformBlend = { activeModal = ActiveEditorModal.TRANSFORM_BLEND },
-                    onOpenAudioMixer = { activeModal = ActiveEditorModal.AUDIO_MIXER },
-                    onToggleProxy = viewModel::toggleProxyPlayback,
-                    onRotateClip = viewModel::rotateSelectedClipQuarterTurn,
-                )
             }
         }
     }
@@ -553,7 +628,7 @@ fun EditorScreen(
             )
         }
         ActiveEditorModal.EXPORT_STATUS -> state.sequence?.let { seq ->
-            val exportCfg = state.exportConfig ?: com.vyro.core.contracts.ExportConfig(
+            val exportCfg = state.exportConfig ?: ExportConfig(
                 projectId = state.projectId,
                 outputTitle = state.projectTitle,
                 width = seq.width,
@@ -585,8 +660,8 @@ fun EditorScreen(
                 onRelinkClick = { asset ->
                     pendingRelinkAssetId = asset.assetId
                     val mimeFilter = when (asset.mediaKind) {
-                        com.vyro.core.model.MediaKind.AUDIO -> arrayOf("audio/*")
-                        com.vyro.core.model.MediaKind.PHOTO -> arrayOf("image/*")
+                        MediaKind.AUDIO -> arrayOf("audio/*")
+                        MediaKind.PHOTO -> arrayOf("image/*")
                         else -> arrayOf("video/*", "image/*", "audio/*")
                     }
                     relinkLauncher.launch(mimeFilter)
@@ -623,6 +698,158 @@ fun EditorScreen(
 }
 
 @Composable
+private fun TimelineStageDock(
+    sequence: Sequence,
+    state: EditorUiState,
+    compact: Boolean = false,
+    onScrub: (Long) -> Unit,
+    onSelectClip: (String?) -> Unit,
+    onMoveClip: (String, Long) -> Unit,
+    onTrimClip: (String, Long, Long, Long) -> Unit,
+    onZoomScaleChanged: (Float) -> Unit,
+    onLockedTrackInteraction: (String) -> Unit,
+    onToggleMute: () -> Unit,
+    onEditCover: () -> Unit,
+    onAddAudio: () -> Unit,
+    onAddMediaClick: () -> Unit,
+) {
+    val hasSecondaryClips = sequence.tracks.any {
+        it.type != TrackType.VIDEO && it.clips.isNotEmpty()
+    }
+    val dockHeight = if (compact) {
+        if (hasSecondaryClips) 156.dp else 138.dp
+    } else {
+        178.dp
+    }
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(dockHeight)
+            .background(Color(0xFF13151B))
+            .padding(vertical = if (compact) 2.dp else 4.dp),
+    ) {
+        val density = LocalDensity.current
+        val centerXPx = with(density) { (maxWidth / 2f).toPx() }
+        val pxPerUs = with(density) {
+            (TimelineSurfaceView.BASE_DP_PER_SECOND.dp.toPx() * state.zoomScale) / 1_000_000f
+        }
+        val scrollOffsetPx = state.playheadUs * pxPerUs
+
+        AndroidView(
+            modifier = Modifier
+                .fillMaxSize()
+                .testTag("timeline_surface_view"),
+            factory = { ctx ->
+                TimelineSurfaceView(ctx).apply {
+                    onScrubPlayheadUs = onScrub
+                    this.onSelectClip = onSelectClip
+                    this.onMoveClip = onMoveClip
+                    this.onTrimClip = onTrimClip
+                    this.onZoomScaleChanged = onZoomScaleChanged
+                    this.onLockedTrackInteraction = onLockedTrackInteraction
+                }
+            },
+            update = { view ->
+                view.frameRate = sequence.frameRate
+                view.durationUs = if (sequence.durationUs > 0L) sequence.durationUs else 4_000_000L
+                view.tracks = sequence.tracks
+                view.selectedClipId = state.selectedClipId
+                view.playheadUs = state.playheadUs
+                view.zoomScale = state.zoomScale
+                view.waveforms = state.waveforms
+            },
+        )
+
+        Box(
+            modifier = Modifier.offset {
+                IntOffset(
+                    x = (centerXPx - scrollOffsetPx - 128.dp.roundToPx()).roundToInt(),
+                    y = (if (compact) 34.dp else 40.dp).roundToPx(),
+                )
+            },
+        ) {
+            TimelineLeftColumn(
+                isMuted = state.isClipAudioMuted,
+                coverSpec = sequence.coverSpec,
+                onToggleMute = onToggleMute,
+                onEditCover = onEditCover,
+            )
+        }
+
+        Surface(
+            modifier = Modifier
+                .offset {
+                    val pillY = when {
+                        compact && hasSecondaryClips -> 114.dp
+                        compact -> 86.dp
+                        hasSecondaryClips -> 132.dp
+                        else -> 98.dp
+                    }
+                    IntOffset(
+                        x = (centerXPx - scrollOffsetPx).roundToInt(),
+                        y = pillY.roundToPx(),
+                    )
+                }
+                .minimumInteractiveComponentSize()
+                .widthIn(min = 148.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(role = Role.Button, onClick = onAddAudio)
+                .testTag("add_audio_pill_button"),
+            shape = RoundedCornerShape(6.dp),
+            color = VyroColors.SlateControl,
+        ) {
+            Text(
+                text = stringResource(R.string.editor_add_audio_pill),
+                fontSize = 12.sp,
+                color = VyroColors.TextSecondary,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            )
+        }
+
+        // Right-side pinned crimson + button with 48dp accessible touch target
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = if (compact) 32.dp else 38.dp, end = 4.dp)
+                .minimumInteractiveComponentSize()
+                .size(48.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(role = Role.Button, onClick = onAddMediaClick)
+                .testTag("add_media_button")
+                .semantics { contentDescription = "Add video or photo clip" },
+            contentAlignment = Alignment.Center,
+        ) {
+            Surface(
+                modifier = Modifier.size(38.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = VyroColors.CrimsonAccent,
+                border = BorderStroke(1.5.dp, Color(0xFF13151B)),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            }
+        }
+
+        // Fixed horizontal-center crimson playhead needle
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 18.dp, bottom = 4.dp)
+                .width(2.5.dp)
+                .fillMaxHeight()
+                .background(VyroColors.CrimsonAccent)
+                .testTag("fixed_center_playhead"),
+        )
+    }
+}
+
+@Composable
 private fun RecoverySnapshotBanner(
     recoverySource: RecoverySource,
     recoveredCommands: List<String>,
@@ -639,6 +866,7 @@ private fun RecoverySnapshotBanner(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
             .testTag("recovery_snapshot_banner"),
         shape = RoundedCornerShape(10.dp),
         color = VyroColors.ElectricCyan.copy(alpha = 0.14f),
@@ -723,6 +951,7 @@ private fun CorruptProjectFallbackView(
                         text = stringResource(R.string.editor_corrupt_title),
                         style = MaterialTheme.typography.titleMedium,
                         color = VyroColors.TextPrimary,
+                        modifier = Modifier.semantics { heading() },
                     )
                 }
                 Text(
@@ -778,6 +1007,7 @@ private fun MissingMediaBanner(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 10.dp, vertical = 4.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite }
             .testTag("missing_media_banner"),
         shape = RoundedCornerShape(10.dp),
         color = VyroColors.StudioAmber.copy(alpha = 0.14f),
@@ -837,7 +1067,11 @@ private fun MissingMediaBanner(
 
 @Composable
 private fun EditorTopBar(
+    projectTitle: String,
+    saveStatus: PersistenceSaveStatus,
+    showTitle: Boolean,
     hasMissingMedia: Boolean,
+    compact: Boolean = false,
     onClose: () -> Unit,
     onOpenAssets: () -> Unit,
     onHelp: () -> Unit,
@@ -848,19 +1082,49 @@ private fun EditorTopBar(
         modifier = Modifier
             .fillMaxWidth()
             .background(VyroColors.Obsidian)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
+            .padding(horizontal = 6.dp, vertical = if (compact) 0.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        IconButton(
-            onClick = onClose,
-            modifier = Modifier.testTag("editor_close_button"),
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = stringResource(R.string.editor_close_desc),
-                tint = VyroColors.TextPrimary,
-            )
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier.testTag("editor_close_button"),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Close,
+                    contentDescription = stringResource(R.string.editor_close_desc),
+                    tint = VyroColors.TextPrimary,
+                )
+            }
+
+            if (showTitle && projectTitle.isNotBlank()) {
+                Text(
+                    text = projectTitle,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = VyroColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                val statusColor = when (saveStatus) {
+                    PersistenceSaveStatus.SAVED -> VyroColors.VideoEmerald
+                    PersistenceSaveStatus.DIRTY, PersistenceSaveStatus.AUTOSAVING -> VyroColors.StudioAmber
+                    PersistenceSaveStatus.FAILED -> VyroColors.CoralError
+                    else -> VyroColors.ElectricCyan
+                }
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(statusColor)
+                        .semantics { contentDescription = "Save status ${saveStatus.name}" },
+                )
+            }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -916,6 +1180,7 @@ private fun TransportControlRow(
     isFullscreen: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
+    compact: Boolean = false,
     onJumpStart: () -> Unit,
     onTogglePlay: () -> Unit,
     onUndo: () -> Unit,
@@ -929,7 +1194,7 @@ private fun TransportControlRow(
         modifier = Modifier
             .fillMaxWidth()
             .background(Color(0xFF13151B))
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = if (compact) 0.dp else 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
@@ -946,7 +1211,11 @@ private fun TransportControlRow(
             }
             IconButton(
                 onClick = onTogglePlay,
-                modifier = Modifier.testTag("play_pause_button"),
+                modifier = Modifier
+                    .testTag("play_pause_button")
+                    .semantics {
+                        stateDescription = if (isPlaying) "Playing" else "Paused"
+                    },
             ) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -962,7 +1231,9 @@ private fun TransportControlRow(
             text = "$currentStr / $durationStr",
             style = VyroTimecodeStyle.copy(fontSize = 12.sp),
             color = VyroColors.TextSecondary,
-            modifier = Modifier.testTag("timecode_readout"),
+            modifier = Modifier
+                .testTag("timecode_readout")
+                .semantics { contentDescription = "Timecode $currentStr of $durationStr" },
         )
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1011,19 +1282,23 @@ private fun TimelineLeftColumn(
         Column(
             modifier = Modifier
                 .weight(1f)
+                .minimumInteractiveComponentSize()
                 .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onToggleMute)
+                .clickable(role = Role.Button, onClick = onToggleMute)
                 .padding(vertical = 6.dp)
-                .testTag("mute_clip_audio_button"),
+                .testTag("mute_clip_audio_button")
+                .semantics {
+                    stateDescription = if (isMuted) "Muted" else "Unmuted"
+                },
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
             Icon(
                 imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
                 contentDescription = stringResource(
                     if (isMuted) R.string.editor_unmute_clip_audio else R.string.editor_mute_clip_audio,
                 ),
-                tint = VyroColors.TextSecondary,
+                tint = if (isMuted) VyroColors.TextSecondary else VyroColors.ElectricCyan,
                 modifier = Modifier.size(18.dp),
             )
             Text(
@@ -1037,285 +1312,33 @@ private fun TimelineLeftColumn(
             )
         }
 
-        Surface(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .clickable(onClick = onEditCover)
-                .testTag("cover_tile_button"),
-            shape = RoundedCornerShape(6.dp),
-            color = Color(coverSpec.accentColorArgb),
-            border = BorderStroke(1.dp, VyroColors.SteelDivider),
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                Text(
-                    text = coverSpec.label,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color.White,
-                    modifier = Modifier.align(Alignment.Center),
-                )
+            Box(
+                modifier = Modifier
+                    .minimumInteractiveComponentSize()
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color(coverSpec.accentColorArgb))
+                    .clickable(role = Role.Button, onClick = onEditCover)
+                    .testTag("cover_edit_button")
+                    .semantics { contentDescription = "Edit project cover" },
+                contentAlignment = Alignment.Center,
+            ) {
                 Icon(
                     imageVector = Icons.Default.Edit,
                     contentDescription = null,
                     tint = Color.White,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(3.dp)
-                        .size(11.dp),
+                    modifier = Modifier.size(15.dp),
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun BottomEditorToolStrip(
-    toolMode: EditorToolMode,
-    isTextClipSelected: Boolean,
-    hasSelection: Boolean,
-    hasAudioTarget: Boolean,
-    proxyEnabled: Boolean,
-    keyframeActive: Boolean,
-    currentFilter: ColorFilterPreset,
-    currentEffect: VisualEffectPreset,
-    currentWidth: Int,
-    currentHeight: Int,
-    onSelectMode: (EditorToolMode) -> Unit,
-    onAddTextAndOpenSubbar: () -> Unit,
-    onAddText: () -> Unit,
-    onAddAudio: () -> Unit,
-    onToggleKeyframe: () -> Unit,
-    onEditText: () -> Unit,
-    onFont: () -> Unit,
-    onColor: () -> Unit,
-    onAnimation: () -> Unit,
-    onSplit: () -> Unit,
-    onTrimShorter: () -> Unit,
-    onTrimLonger: () -> Unit,
-    onStepBackward: () -> Unit,
-    onStepForward: () -> Unit,
-    onDelete: () -> Unit,
-    onSelectFilter: (ColorFilterPreset) -> Unit,
-    onSelectEffect: (VisualEffectPreset) -> Unit,
-    onSelectAspect: (AspectRatioPreset) -> Unit,
-    onOpenTransformBlend: () -> Unit,
-    onOpenAudioMixer: () -> Unit,
-    onToggleProxy: () -> Unit,
-    onRotateClip: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(VyroColors.Obsidian)
-            .navigationBarsPadding()
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 10.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        when (toolMode) {
-            EditorToolMode.ROOT -> {
-                BottomToolItem(
-                    icon = Icons.Default.ContentCut,
-                    label = stringResource(R.string.editor_tab_trim),
-                    testTag = "tab_trim",
-                    onClick = { onSelectMode(EditorToolMode.TRIM) },
-                )
-                BottomToolItem(
-                    icon = Icons.Default.MusicNote,
-                    label = stringResource(R.string.editor_tab_music),
-                    testTag = "tool_add_audio",
-                    onClick = onAddAudio,
-                )
-                BottomToolItem(
-                    icon = Icons.Default.TextFields,
-                    label = stringResource(R.string.editor_tab_text),
-                    testTag = "tool_add_text",
-                    onClick = onAddTextAndOpenSubbar,
-                )
-                BottomToolItem(
-                    icon = Icons.Default.Diamond,
-                    label = stringResource(R.string.editor_tab_keyframe),
-                    accent = if (keyframeActive) VyroColors.StudioAmber else VyroColors.TextPrimary,
-                    testTag = "keyframe_button",
-                    onClick = onToggleKeyframe,
-                )
-                BottomToolItem(
-                    icon = Icons.Default.AutoFixHigh,
-                    label = stringResource(R.string.editor_tab_effect),
-                    accent = if (currentEffect != VisualEffectPreset.NONE) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
-                    testTag = "tab_effect",
-                    onClick = { onSelectMode(EditorToolMode.EFFECT) },
-                )
-                BottomToolItem(
-                    icon = Icons.Default.AspectRatio,
-                    label = stringResource(R.string.editor_tab_canvas),
-                    testTag = "tab_canvas",
-                    onClick = { onSelectMode(EditorToolMode.CANVAS) },
-                )
-                BottomToolItem(
-                    icon = Icons.Default.FilterVintage,
-                    label = stringResource(R.string.editor_tab_filter),
-                    accent = if (currentFilter != ColorFilterPreset.ORIGINAL) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
-                    testTag = "tab_filter",
-                    onClick = { onSelectMode(EditorToolMode.FILTER) },
-                )
-                BottomToolItem(
-                    icon = Icons.Default.AspectRatio,
-                    label = stringResource(R.string.editor_tab_transform),
-                    enabled = hasSelection,
-                    testTag = "tab_transform_blend",
-                    onClick = onOpenTransformBlend,
-                )
-                BottomToolItem(
-                    icon = Icons.AutoMirrored.Filled.VolumeUp,
-                    label = stringResource(R.string.editor_tab_audio_mix),
-                    enabled = hasAudioTarget,
-                    accent = if (hasAudioTarget) VyroColors.VideoEmerald else VyroColors.TextPrimary,
-                    testTag = "tab_audio_mix",
-                    onClick = onOpenAudioMixer,
-                )
-                BottomToolItem(
-                    icon = Icons.Default.Memory,
-                    label = stringResource(if (proxyEnabled) R.string.editor_tab_proxy_on else R.string.editor_tab_proxy_off),
-                    accent = if (proxyEnabled) VyroColors.ElectricCyan else VyroColors.TextPrimary,
-                    testTag = "tab_proxy_mode",
-                    onClick = onToggleProxy,
-                )
-            }
-
-            EditorToolMode.TRIM -> {
-                BackToolItem(onClick = { onSelectMode(EditorToolMode.ROOT) })
-                BottomToolItem(Icons.AutoMirrored.Filled.KeyboardArrowLeft, stringResource(R.string.editor_tool_prev_frame), testTag = "tool_step_prev_frame", onClick = onStepBackward)
-                BottomToolItem(Icons.AutoMirrored.Filled.KeyboardArrowRight, stringResource(R.string.editor_tool_next_frame), testTag = "tool_step_next_frame", onClick = onStepForward)
-                BottomToolItem(Icons.Default.ContentCut, stringResource(R.string.editor_tool_split), testTag = "tool_split", onClick = onSplit)
-                BottomToolItem(Icons.Default.ContentCut, stringResource(R.string.editor_tool_trim_shorter), testTag = "tool_trim_minus", onClick = onTrimShorter)
-                BottomToolItem(Icons.Default.Add, stringResource(R.string.editor_tool_trim_longer), testTag = "tool_trim_plus", onClick = onTrimLonger)
-                BottomToolItem(Icons.Default.AspectRatio, stringResource(R.string.editor_tool_rotate), enabled = hasSelection, testTag = "tool_rotate_clip", onClick = onRotateClip)
-                BottomToolItem(
-                    icon = Icons.Default.DeleteOutline,
-                    label = stringResource(R.string.editor_tool_delete),
-                    enabled = hasSelection,
-                    accent = VyroColors.CoralError,
-                    testTag = "tool_delete",
-                    onClick = onDelete,
-                )
-            }
-
-            EditorToolMode.TEXT -> {
-                BackToolItem(onClick = { onSelectMode(EditorToolMode.ROOT) })
-                BottomToolItem(Icons.Default.Add, stringResource(R.string.editor_tool_add), testTag = "tool_add_text_sub", onClick = onAddText)
-                BottomToolItem(Icons.Default.Edit, stringResource(R.string.editor_tool_edit), enabled = isTextClipSelected, testTag = "tool_edit_text", onClick = onEditText)
-                BottomToolItem(Icons.Default.FontDownload, stringResource(R.string.editor_tool_font), enabled = isTextClipSelected, testTag = "tool_font", onClick = onFont)
-                BottomToolItem(Icons.Default.ColorLens, stringResource(R.string.editor_tool_color), enabled = isTextClipSelected, testTag = "tool_color", onClick = onColor)
-                BottomToolItem(Icons.Default.Animation, stringResource(R.string.editor_tool_animation), enabled = isTextClipSelected, testTag = "tool_animate", onClick = onAnimation)
-                BottomToolItem(Icons.Default.ContentCut, stringResource(R.string.editor_tool_split), enabled = isTextClipSelected, testTag = "tool_split", onClick = onSplit)
-                BottomToolItem(Icons.Default.DeleteOutline, stringResource(R.string.editor_tool_delete), enabled = isTextClipSelected, accent = VyroColors.CoralError, testTag = "tool_delete", onClick = onDelete)
-            }
-
-            EditorToolMode.FILTER -> {
-                BackToolItem(onClick = { onSelectMode(EditorToolMode.ROOT) })
-                ColorFilterPreset.entries.forEach { preset ->
-                    BottomToolItem(
-                        icon = Icons.Default.FilterVintage,
-                        label = preset.displayName.uppercase(),
-                        accent = if (preset == currentFilter) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
-                        testTag = "filter_${preset.name.lowercase()}",
-                        onClick = { onSelectFilter(preset) },
-                    )
-                }
-            }
-
-            EditorToolMode.EFFECT -> {
-                BackToolItem(onClick = { onSelectMode(EditorToolMode.ROOT) })
-                VisualEffectPreset.entries.forEach { preset ->
-                    BottomToolItem(
-                        icon = Icons.Default.AutoFixHigh,
-                        label = preset.displayName.uppercase(),
-                        accent = if (preset == currentEffect) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
-                        testTag = "effect_${preset.name.lowercase()}",
-                        onClick = { onSelectEffect(preset) },
-                    )
-                }
-            }
-
-            EditorToolMode.CANVAS -> {
-                BackToolItem(onClick = { onSelectMode(EditorToolMode.ROOT) })
-                AspectRatioPreset.entries.forEach { preset ->
-                    val active = currentWidth == preset.width && currentHeight == preset.height
-                    BottomToolItem(
-                        icon = Icons.Default.AspectRatio,
-                        label = preset.label,
-                        accent = if (active) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
-                        testTag = "aspect_${preset.name.lowercase()}",
-                        onClick = { onSelectAspect(preset) },
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BackToolItem(onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(onClick = onClick)
-            .testTag("tool_subbar_back"),
-        color = VyroColors.SlateControl,
-        shape = RoundedCornerShape(10.dp),
-    ) {
-        Box(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 12.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                contentDescription = stringResource(R.string.editor_tool_back),
-                tint = VyroColors.TextPrimary,
+            Text(
+                text = coverSpec.label.ifBlank { stringResource(R.string.editor_cover_label) },
+                fontSize = 10.sp,
+                color = VyroColors.TextSecondary,
             )
         }
-    }
-}
-
-@Composable
-private fun BottomToolItem(
-    icon: ImageVector,
-    label: String,
-    enabled: Boolean = true,
-    accent: Color = VyroColors.TextPrimary,
-    testTag: String,
-    onClick: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(10.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-            .testTag(testTag),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = if (enabled) accent else VyroColors.SteelMuted,
-            modifier = Modifier.size(22.dp),
-        )
-        Text(
-            text = label,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 0.4.sp,
-            color = if (enabled) {
-                if (accent == VyroColors.TextPrimary) VyroColors.TextSecondary else accent
-            } else {
-                VyroColors.SteelMuted
-            },
-        )
     }
 }

@@ -27,6 +27,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -39,6 +40,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -116,22 +121,24 @@ internal fun FontPickerDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 fonts.forEach { (id, label) ->
-                    val selected = id == currentFontId
+                    val isSelected = id == currentFontId
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelectFont(id) },
+                            .minimumInteractiveComponentSize()
+                            .clickable(role = Role.RadioButton) { onSelectFont(id) }
+                            .semantics { selected = isSelected },
                         shape = MaterialTheme.shapes.small,
-                        color = if (selected) VyroColors.CrimsonAccent.copy(alpha = 0.16f) else VyroColors.SlateControl,
+                        color = if (isSelected) VyroColors.CrimsonAccent.copy(alpha = 0.16f) else VyroColors.SlateControl,
                         border = BorderStroke(
                             1.dp,
-                            if (selected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
+                            if (isSelected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
                         ),
                     ) {
                         Text(
                             text = label,
                             style = MaterialTheme.typography.bodyLarge,
-                            color = if (selected) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
+                            color = if (isSelected) VyroColors.CrimsonAccent else VyroColors.TextPrimary,
                             modifier = Modifier.padding(14.dp),
                         )
                     }
@@ -151,12 +158,12 @@ internal fun ColorPickerDialog(
     onSelectColor: (Long) -> Unit,
 ) {
     val palette = listOf(
-        0xFFFFFFFFL,
-        0xFF00E5FFL,
-        0xFFFF3B6BL,
-        0xFFF3B768L,
-        0xFF10B981L,
-        0xFF8B5CF6L,
+        0xFFFFFFFFL to "White",
+        0xFF00E5FFL to "Cyan",
+        0xFFFF3B6BL to "Crimson",
+        0xFFF3B768L to "Amber",
+        0xFF10B981L to "Emerald",
+        0xFF8B5CF6L to "Violet",
     )
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -168,20 +175,32 @@ internal fun ColorPickerDialog(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                palette.forEach { argb ->
-                    val selected = argb == currentColorArgb
+                palette.forEach { (argb, colorName) ->
+                    val isSelected = argb == currentColorArgb
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .minimumInteractiveComponentSize()
+                            .size(48.dp)
                             .clip(CircleShape)
-                            .background(Color(argb))
-                            .border(
-                                width = if (selected) 3.dp else 1.dp,
-                                color = if (selected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
-                                shape = CircleShape,
-                            )
-                            .clickable { onSelectColor(argb) },
-                    )
+                            .clickable(role = Role.RadioButton) { onSelectColor(argb) }
+                            .semantics {
+                                contentDescription = "$colorName text color"
+                                selected = isSelected
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(CircleShape)
+                                .background(Color(argb))
+                                .border(
+                                    width = if (isSelected) 3.dp else 1.dp,
+                                    color = if (isSelected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
+                                    shape = CircleShape,
+                                ),
+                        )
+                    }
                 }
             }
         },
@@ -208,7 +227,8 @@ internal fun AnimationPickerDialog(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onSelectPreset(preset) },
+                            .clickable { onSelectPreset(preset) }
+                            .testTag("anim_${preset.name.lowercase()}"),
                         shape = MaterialTheme.shapes.small,
                         color = if (selected) VyroColors.CrimsonAccent.copy(alpha = 0.16f) else VyroColors.SlateControl,
                         border = BorderStroke(
@@ -259,20 +279,32 @@ internal fun CoverEditDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceEvenly,
                 ) {
-                    palette.forEach { argb ->
-                        val selected = argb == colorArgb
+                    palette.forEachIndexed { idx, argb ->
+                        val isSelected = argb == colorArgb
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
+                                .minimumInteractiveComponentSize()
+                                .size(48.dp)
                                 .clip(CircleShape)
-                                .background(Color(argb))
-                                .border(
-                                    width = if (selected) 2.5.dp else 1.dp,
-                                    color = if (selected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
-                                    shape = CircleShape,
-                                )
-                                .clickable { colorArgb = argb },
-                        )
+                                .clickable(role = Role.RadioButton) { colorArgb = argb }
+                                .semantics {
+                                    contentDescription = "Cover swatch ${idx + 1}"
+                                    selected = isSelected
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(argb))
+                                    .border(
+                                        width = if (isSelected) 2.5.dp else 1.dp,
+                                        color = if (isSelected) VyroColors.CrimsonAccent else VyroColors.SteelDivider,
+                                        shape = CircleShape,
+                                    ),
+                            )
+                        }
                     }
                 }
             }

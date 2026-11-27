@@ -10,6 +10,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -110,12 +112,18 @@ fun MediaSelectorScreen(
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { innerPadding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            Column(modifier = Modifier.fillMaxSize()) {
+            val adaptiveColumns = if (maxWidth >= 720.dp) (state.gridColumns + 2).coerceAtMost(6) else state.gridColumns
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 960.dp),
+            ) {
                 // Top Bar matching reference Screenshot 3
                 Row(
                     modifier = Modifier
@@ -326,7 +334,7 @@ fun MediaSelectorScreen(
 
                 // Thumbnail Grid
                 LazyVerticalGrid(
-                    columns = GridCells.Fixed(state.gridColumns),
+                    columns = GridCells.Fixed(adaptiveColumns),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),

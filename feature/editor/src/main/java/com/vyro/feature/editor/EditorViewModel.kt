@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.vyro.core.common.EngineError
+import com.vyro.core.common.EngineErrorCode
 import com.vyro.core.common.EngineResult
 import com.vyro.core.common.LogSeverity
 import com.vyro.core.common.VyroLogger
@@ -57,7 +58,11 @@ import com.vyro.core.model.Sequence
 import com.vyro.core.model.TextAnimationPreset
 import com.vyro.core.model.TextClipSpec
 import com.vyro.core.model.TrackType
+import com.vyro.core.model.TransformKeyframe
+import com.vyro.core.model.TransitionPreset
+import com.vyro.core.model.TransitionSpec
 import com.vyro.core.model.VisualEffectPreset
+import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -146,6 +151,26 @@ data class EditorUiState(
             val audioMuted = audioTrack?.isMuted ?: false
             return if (audioTrack?.clips?.isNotEmpty() == true) audioMuted else videoMuted
         }
+
+    val keyframeTargetClip: Clip?
+        get() = selectedClip ?: primaryVideoClip
+
+    val hasKeyframeNearPlayhead: Boolean
+        get() {
+            val target = keyframeTargetClip ?: return false
+            val offsetUs = (playheadUs - target.timing.timelineStartUs).coerceIn(0L, target.timing.timelineDurationUs)
+            val tolerance = (sequence?.frameRate?.frameDurationUs ?: 33_333L).coerceAtLeast(33_333L)
+            return target.keyframes.any { abs(it.offsetUs - offsetUs) <= tolerance }
+        }
+
+    val selectedTrack: com.vyro.core.model.Track?
+        get() {
+            val target = selectedClip ?: primaryVideoClip ?: return null
+            return sequence?.tracks?.firstOrNull { it.id == target.trackId }
+        }
+
+    val isSelectedTrackLocked: Boolean
+        get() = selectedTrack?.isLocked == true
 }
 
 class EditorViewModel(
@@ -570,6 +595,14 @@ class EditorViewModel(
         _uiState.update { it.copy(zoomScale = (it.zoomScale + delta).coerceIn(0.4f, 3.0f)) }
     }
 
+    fun setZoom(scale: Float) {
+        _uiState.update { it.copy(zoomScale = scale.coerceIn(0.4f, 3.0f)) }
+    }
+
+    fun resetZoom() {
+        _uiState.update { it.copy(zoomScale = 1.0f) }
+    }
+
     fun addTextClip() {
         val seq = _uiState.value.sequence ?: return
         val textTrack = seq.tracks.firstOrNull { it.type == TrackType.TEXT } ?: return
@@ -709,6 +742,14 @@ class EditorViewModel(
         executeCommand(EditCommand.UpdateEffect(target.id, preset), selectClipId = target.id)
     }
 
+    fun setSelectedClipTransition(preset: TransitionPreset) {
+        val target = _uiState.value.selectedClip ?: _uiState.value.primaryVideoClip ?: return
+        executeCommand(
+            EditCommand.UpdateTransition(target.id, TransitionSpec(preset = preset, durationUs = 500_000L)),
+            selectClipId = target.id,
+        )
+    }
+
     fun updateAudioSpec(clipId: String, spec: AudioClipSpec) {
         executeCommand(EditCommand.UpdateAudioSpec(clipId, spec), selectClipId = clipId)
     }
@@ -763,12 +804,78 @@ class EditorViewModel(
         executeCommand(EditCommand.ToggleKeyframe(clipId), selectClipId = clipId)
     }
 
+    fun addOrUpdateKeyframeAtPlayhead(scaleOverride: Float? = null) {
+        val target = _uiState.value.keyframeTargetClip ?: return
+        val offsetUs = (_uiState.value.playheadUs - target.timing.timelineStartUs)
+            .coerceIn(0L, target.timing.timelineDurationUs.coerceAtLeast(0L))
+        val evaluated = RenderGraphEvaluator.resolveClipTransform(target, offsetUs)
+        val keyframe = TransformKeyframe(
+            offsetUs = offsetUs,
+            normalizedX = evaluated.normalizedX,
+            normalizedY = evaluated.normalizedY,
+            scale = (scaleOverride ?: evaluated.scale).coerceIn(0.35f, 3.0f),
+            rotationDegrees = evaluated.rotationDegrees,
+            opacity = evaluated.opacity,
+        )
+        executeCommand(EditCommand.AddOrUpdateKeyframe(target.id, keyframe), selectClipId = target.id)
+    }
+
+    fun stepKeyframeScale(delta: Float = 0.20f) {
+        val target = _uiState.value.keyframeTargetClip ?: return
+        val offsetUs = (_uiState.value.playheadUs - target.timing.timelineStartUs)
+            .coerceIn(0L, target.timing.timelineDurationUs.coerceAtLeast(0L))
+        val evaluated = RenderGraphEvaluator.resolveClipTransform(target, offsetUs)
+        val nextScale = if (evaluated.scale + delta > 2.0f) 1.0f else (evaluated.scale + delta).coerceIn(0.35f, 3.0f)
+        addOrUpdateKeyframeAtPlayhead(scaleOverride = nextScale)
+    }
+
+    fun removeKeyframeAtPlayhead() {
+        val target = _uiState.value.keyframeTargetClip ?: return
+        val offsetUs = (_uiState.value.playheadUs - target.timing.timelineStartUs)
+            .coerceIn(0L, target.timing.timelineDurationUs.coerceAtLeast(0L))
+        executeCommand(EditCommand.RemoveKeyframe(target.id, offsetUs), selectClipId = target.id)
+    }
+
+    fun jumpToAdjacentKeyframe(forward: Boolean) {
+        val target = _uiState.value.keyframeTargetClip ?: return
+        if (target.keyframes.isEmpty()) return
+        val localOffsetUs = (_uiState.value.playheadUs - target.timing.timelineStartUs)
+            .coerceIn(0L, target.timing.timelineDurationUs.coerceAtLeast(0L))
+        val tolerance = (_uiState.value.sequence?.frameRate?.frameDurationUs ?: 33_333L).coerceAtLeast(33_333L)
+        val candidate = if (forward) {
+            target.keyframes.firstOrNull { it.offsetUs > localOffsetUs + tolerance } ?: target.keyframes.last()
+        } else {
+            target.keyframes.lastOrNull { it.offsetUs < localOffsetUs - tolerance } ?: target.keyframes.first()
+        }
+        scrubTo(target.timing.timelineStartUs + candidate.offsetUs)
+    }
+
     fun toggleTrackMute(trackId: String) {
         executeCommand(EditCommand.ToggleTrackMute(trackId), selectClipId = _uiState.value.selectedClipId)
     }
 
     fun toggleTrackLock(trackId: String) {
         executeCommand(EditCommand.ToggleTrackLock(trackId), selectClipId = _uiState.value.selectedClipId)
+    }
+
+    fun toggleSelectedTrackLock() {
+        val track = _uiState.value.selectedTrack ?: return
+        toggleTrackLock(track.id)
+    }
+
+    fun notifyLockedTrackInteraction(trackId: String) {
+        val trackName = _uiState.value.sequence?.tracks?.firstOrNull { it.id == trackId }?.name ?: trackId
+        _uiState.update {
+            it.copy(
+                error = EngineError(
+                    code = EngineErrorCode.INVALID_TIMELINE_EDIT,
+                    sourceModule = "feature:editor",
+                    userMessage = "Track \"$trackName\" is locked. Unlock it to move or trim clips.",
+                    diagnosticDetail = "Gesture blocked on locked track $trackId",
+                    recoverable = true,
+                ),
+            )
+        }
     }
 
     fun undo() {
